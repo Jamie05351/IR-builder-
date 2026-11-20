@@ -109,7 +109,7 @@ class ChecksTest {
         val set = MeasurementSet.load(Fixtures.measurementSet(combined = true), DesignOptions())
         val result = Checks.run(set)
         assertEquals(0, result.errors, result.items.joinToString("\n"))
-        assertTrue(result.items.any { it.title.contains("matches band sum") })
+        assertTrue(result.items.any { it.title.contains("match the band sum") })
     }
 
     @Test

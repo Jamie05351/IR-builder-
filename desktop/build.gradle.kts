@@ -12,7 +12,6 @@ dependencies {
     implementation(project(":core"))
     implementation(compose.desktop.currentOs)
     implementation(compose.material3)
-    implementation(compose.materialIconsExtended)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.10.2")
 }
 
@@ -20,7 +19,7 @@ compose.desktop {
     application {
         mainClass = "jdsp.irbuilder.ui.MainKt"
         nativeDistributions {
-            targetFormats(TargetFormat.Msi, TargetFormat.Exe)
+            targetFormats(TargetFormat.Exe)
             packageName = "JDSP-IR-Builder"
             packageVersion = "1.0.0"
             description = "Multi-seat Low/Mid/High correction IR designer for J_DSP"
@@ -34,4 +33,14 @@ compose.desktop {
             }
         }
     }
+}
+
+dependencies {
+    testImplementation(kotlin("test"))
+}
+
+tasks.test {
+    useJUnitPlatform()
+    systemProperty("java.awt.headless", "true")
+    systemProperty("screenshots.dir", layout.buildDirectory.dir("screenshots").get().asFile.path)
 }

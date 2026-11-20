@@ -84,6 +84,7 @@ object Checks {
         }
 
         val freqs = set.freqs
+        val combinedOk = ArrayList<Double>()
         for (g in set.groups) {
             val kinds = g.responses.values.map { it.kind }.toSet()
             if (kinds.size > 1) warn("${g.key.label}: mixed file types", "REW text and impulse WAVs at the same position must share one calibration and time origin.")
@@ -114,9 +115,11 @@ object Checks {
                 }
                 val rel = sqrt(num / maxOf(den, 1e-24))
                 if (rel > 0.25) warn("${g.key.label}: combined sweep ≠ band sum", "Relative complex error %.2f. Timing, gain, routing or dynamics changed between sweeps; predictions will be unreliable.".format(rel))
-                else info("${g.key.label}: combined sweep matches band sum", "Relative complex error %.2f.".format(rel))
+                else combinedOk += rel
             }
         }
+
+        if (combinedOk.isNotEmpty()) info("Combined sweeps match the band sum", "${combinedOk.size} position/channel(s); worst relative complex error %.2f.".format(combinedOk.max()))
 
         // Positions far from their seat's typical level suggest a gain change or a moved mic.
         for (seat in Seat.entries) for (ch in Channel.entries) {
