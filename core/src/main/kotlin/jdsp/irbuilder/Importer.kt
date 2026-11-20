@@ -55,6 +55,8 @@ object Importer {
             val nums = parts.take(3).map { it.toDoubleOrNull() }
             if (nums.isEmpty() || nums.any { it == null }) return@forEach
             require(nums.size >= 3) { "${file.name}: a phase column is required; the band sum depends on relative phase" }
+            // REW's linear-spaced exports can start at 0 Hz, which has no log position: skip it.
+            if (nums[0]!! <= 0.0) return@forEach
             rows += DoubleArray(3) { nums[it]!! }
         }
         require(rows.size >= 8) { "${file.name}: need at least eight frequency/SPL/phase rows" }

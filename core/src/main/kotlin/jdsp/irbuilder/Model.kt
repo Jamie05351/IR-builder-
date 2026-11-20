@@ -115,6 +115,15 @@ data class DesignOptions(
             "Maximum shift needs more room: increase taps/common delay or reduce the maximum shift"
         }
         require(driverWeight > 0 && passengerWeight > 0) { "Both seat weights must be positive" }
+        // The correction must fade to zero inside the analysis range; beyond it the FIR phase is 0,
+        // so a region cut off by the range would leave an abrupt phase step (ringing).
+        val reach = regionOctaves + fadeOctaves
+        require(midHighHz * pow2(reach) <= sampleRate * 0.45) {
+            "The Mid/High correction region (crossover × 2^(region + fade)) must end below %.0f Hz: lower the region or fade width".format(sampleRate * 0.45)
+        }
+        require(lowMidHz / pow2(reach) >= 10.0) {
+            "The Low/Mid correction region (crossover ÷ 2^(region + fade)) must start above 10 Hz: lower the region or fade width"
+        }
     }
 }
 

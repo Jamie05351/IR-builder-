@@ -91,6 +91,16 @@ class ImportTest {
         for (i in freqs.indices) assertEquals(0.0, wrap(r.response.arg(i) + 2 * PI * freqs[i] * delay), 1e-6)
     }
 
+    @Test
+    fun rewZeroHertzRowIsSkipped() {
+        val dir = createTempDirectory("irb").toFile()
+        val file = File(dir, "z.txt")
+        file.writeText("0.000 -50 0\n" + (1..2000).joinToString("\n") { "${it * 10.0} 80 0" })
+        val freqs = geomspace(50.0, 15000.0, 64)
+        val r = Importer.read(Measurement(file.path, Seat.DRIVER, "c", Channel.L, Band.LOW, "r"), freqs, 48000)
+        for (i in freqs.indices) assertEquals(1e4, r.response.abs(i), 1e-6)
+    }
+
     companion object {
         fun writeMonoFloatWav(file: File, rate: Int, x: FloatArray) {
             val b = ByteBuffer.allocate(44 + x.size * 4).order(ByteOrder.LITTLE_ENDIAN)
@@ -221,7 +231,21 @@ class DesignTest {
         assertFailsWith<IllegalArgumentException> { DesignOptions(latencyFrames = 100).validate() }
         assertFailsWith<IllegalArgumentException> { DesignOptions(lowMidHz = 10.0).validate() }
         assertFailsWith<IllegalArgumentException> { DesignOptions(taps = 2048, latencyFrames = 1024, maxShiftMs = 20.0).validate() }
+        // Region + fade would run past the analysis range (0.45 × fs): rejected, not cut off.
+        assertFailsWith<IllegalArgumentException> { DesignOptions(midHighHz = 10000.0).validate() }
+        DesignOptions(midHighHz = 10000.0, regionOctaves = 0.5, fadeOctaves = 0.5).validate()
         DesignOptions().validate()
+    }
+
+    @Test
+    fun correctionPhaseIsZeroAtAnalysisEdges() {
+        val ms = Fixtures.measurementSet(positions = listOf("c"), delays = { _, b -> if (b == Band.HIGH) 0.0001 else 0.0 })
+        val o = DesignOptions(midHighHz = 7000.0, regionOctaves = 1.0, fadeOctaves = 0.5)
+        val d = Designer.design(MeasurementSet.load(ms, o))
+        for (ci in 0 until 2) for (bi in 0 until 3) {
+            assertEquals(0.0, d.designedPhase[ci][bi].first(), 1e-12)
+            assertEquals(0.0, d.designedPhase[ci][bi].last(), 1e-12)
+        }
     }
 }
 

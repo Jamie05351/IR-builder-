@@ -151,12 +151,19 @@ class AppState(private val scope: CoroutineScope) {
         }
     }
 
+    /** A background result is only published if the inputs it was computed from are still current. */
+    private fun inputsChangedSince(snapshot: List<Measurement>, o: DesignOptions) = measurements.toList() != snapshot || options != o
+
     fun runChecks(then: (() -> Unit)? = null) = background("Reading measurements and running checks…") {
         val snapshot = measurements.toList()
         val o = options
         val (s, c) = withContext(Dispatchers.Default) {
             val s = MeasurementSet.load(snapshot, o)
             s to Checks.run(s)
+        }
+        if (inputsChangedSince(snapshot, o)) {
+            status = "Inputs changed while checking; run the checks again."
+            return@background
         }
         set = s
         checks = c
@@ -171,6 +178,10 @@ class AppState(private val scope: CoroutineScope) {
             val s = set?.takeIf { it.options == o && it.measurements == snapshot } ?: MeasurementSet.load(snapshot, o)
             val c = Checks.run(s)
             Triple(s, c, if (c.canDesign) Designer.design(s) else null)
+        }
+        if (inputsChangedSince(snapshot, o)) {
+            status = "Inputs changed while calculating; result discarded. Calculate again."
+            return@background
         }
         set = s
         checks = c

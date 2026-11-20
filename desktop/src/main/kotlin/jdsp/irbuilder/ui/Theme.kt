@@ -179,7 +179,7 @@ fun NumberField(value: Double, onValue: (Double) -> Unit, width: Dp = 110.dp, ac
     }, width = width, accent = accent, error = parsed == null)
 }
 
-fun trimNumber(v: Double): String = if (v == Math.rint(v) && kotlin.math.abs(v) < 1e9) v.toLong().toString() else "%.4g".format(v).let { s ->
+fun trimNumber(v: Double): String = if (v == Math.rint(v) && kotlin.math.abs(v) < 1e9) v.toLong().toString() else String.format(java.util.Locale.ROOT, "%.4g", v).let { s ->
     if (s.contains('e')) s else s.trimEnd('0').trimEnd('.')
 }
 
