@@ -97,6 +97,11 @@ data class CheckScope(
 
         const val FINDER_PURPOSE = "the Crossover Finder"
 
+        /** EQ Wizard: each side's Combined sweeps, or its band solos summed when there are none. */
+        fun eqWizard(measurements: List<Measurement>?): CheckScope =
+            if (measurements == null || measurements.any { it.band == Band.COMBINED }) CheckScope(listOf("EQ" to setOf(Band.COMBINED)), strict = false, purpose = "the EQ Wizard")
+            else CheckScope(listOf("EQ" to Band.BRANCHES.toSet()), strict = false, purpose = "the EQ Wizard")
+
         fun bandAlign(a: AlignOptions, measurements: List<Measurement>? = null): CheckScope {
             val enabled = AlignPair.entries.filter { if (it == AlignPair.LOW_MID) a.lowMid else a.midHigh }
             val (used, skipped) = enabled.partition { p -> measurements == null || measurements.any { it.band == p.moving } }

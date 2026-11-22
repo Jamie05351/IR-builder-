@@ -45,8 +45,8 @@ fun ChecksScreen(state: AppState) {
         Panel("Measurement setup", accent = Jdsp.Cyan) {
             val o = state.options
             fun set(n: DesignOptions) = state.updateOptions(n)
-            val finder = state.tool == jdsp.irbuilder.Tool.CROSSOVER_FINDER
-            Note(if (finder) "The Crossover Finder takes J_DSP's crossovers from its own page; the sweeps are checked around them." else "Used by Band Align and Phase IRs. Enter the crossover corners J_DSP had during the sweeps: Band Align scores around them and the Phase IRs correct around them.")
+            val finder = state.tool == jdsp.irbuilder.Tool.CROSSOVER_FINDER || state.tool == jdsp.irbuilder.Tool.EQ_WIZARD
+            Note(if (state.tool == jdsp.irbuilder.Tool.EQ_WIZARD) "The EQ Wizard reads the fit range set on its own page." else if (finder) "The Crossover Finder takes J_DSP's crossovers from its own page; the sweeps are checked around them." else "Used by Band Align and Phase IRs. Enter the crossover corners J_DSP had during the sweeps: Band Align scores around them and the Phase IRs correct around them.")
             Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.Bottom) {
                 if (!finder) {
                     Labeled("Low/Mid crossover (Hz)") { NumberField(o.lowMidHz, { set(o.copy(lowMidHz = it)) }, accent = Jdsp.LowBand) }
@@ -90,6 +90,7 @@ fun ChecksScreen(state: AppState) {
                 val ready = when (state.tool) {
                     jdsp.irbuilder.Tool.BAND_ALIGN -> "Ready for Band Align"
                     jdsp.irbuilder.Tool.CROSSOVER_FINDER -> "Ready for the Crossover Finder"
+                    jdsp.irbuilder.Tool.EQ_WIZARD -> "Ready for the EQ Wizard"
                     else -> "Ready to design"
                 }
                 Badge(if (c.canDesign) ready else "Fix errors first", if (c.canDesign) Jdsp.MGreen else Jdsp.MRed)
