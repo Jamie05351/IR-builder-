@@ -113,3 +113,16 @@ class StereoTest {
         DesignOptions(midHighHz = 7000.0, regionOctaves = 1.0, fadeOctaves = 1.0, irMode = IrMode.STEREO, maxShiftMs = 5.0).validate()
     }
 }
+
+class CombinedOnlyChecksTest {
+    @Test
+    fun perBandChecksWithOnlyCombinedSweepsPointToStereo() {
+        val dir = createTempDirectory("irb").toFile()
+        val file = File(dir, "c.txt").also { Fixtures.writeRew(it, { f -> Band.BRANCHES.map { b -> Fixtures.band(b, f) }.reduce { a, c -> a + c } }) }
+        val ms = listOf(Measurement(file.path, Seat.DRIVER, "c", Channel.L, Band.COMBINED, "r"))
+        val scope = CheckScope.phaseIrs(ms)
+        val r = Checks.run(MeasurementSet.load(ms, DesignOptions(), scope.crossovers.toSet()), scope)
+        assertFalse(r.canDesign)
+        assertTrue(r.items.single().title.contains("Stereo"), r.items.joinToString { it.title })
+    }
+}

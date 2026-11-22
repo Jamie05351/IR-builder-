@@ -132,6 +132,12 @@ object Checks {
         }
         val finding = scope.purpose == CheckScope.FINDER_PURPOSE
         val aligning = scope.purpose == "Band Align" || finding
+        // Phase IRs in Per-band mode with only Combined sweeps: those are the Stereo IR's input.
+        val combinedOnly = !aligning && set.measurements.all { it.band == Band.COMBINED }
+        if (combinedOnly && scope.requiredBands.isEmpty()) {
+            err("Only Combined sweeps: switch to Stereo mode", "Per-band IRs need Low/Mid/High band-solo sweeps. Combined sweeps (all bands playing) are what the Stereo IR uses: choose Convolver mode › Stereo (on this page or Design).")
+            return CheckResult(items, emptyList())
+        }
         for (s in scope.skipped) {
             if (finding) warn("$s, so it isn't searched", "Switch that crossover off on the Crossover Finder page, or import its sweeps.")
             else if (aligning) warn("$s, so it isn't aligned", "Switch that pair off on the Band Align page, or import its sweeps.")
