@@ -24,7 +24,23 @@ class LoadedResponse(
     val impulsePeakIndex: Int? = null,
     /** Lowest and highest frequency the file itself covers. */
     val coverageHz: ClosedFloatingPointRange<Double>,
-)
+    /** REW's smoothing note ("1/48 octave", "Psychoacoustic", ...), if the header had one. */
+    val smoothing: String? = null,
+    /** The delay REW took out of the phase and this reader put back, ms (REW text only). */
+    val restoredDelayMs: Double = 0.0,
+) {
+    /**
+     * Smoothed too coarsely to sum phase: coarser than 1/12 octave, or one of REW's variable
+     * smoothings (Psychoacoustic, ERB, Var). Same rule as J_DSP's Band Align.
+     */
+    val heavilySmoothed: Boolean
+        get() {
+            val s = smoothing ?: return false
+            val m = Regex("""1/(\d+)""").find(s)
+                ?: return !s.trim().lowercase().let { it == "none" || it.startsWith("no ") }
+            return (m.groupValues[1].toIntOrNull() ?: 48) < 12
+        }
+}
 
 object Importer {
     const val MAX_FILE_BYTES = 128L * 1024 * 1024
@@ -45,48 +61,120 @@ object Importer {
         }
     }
 
-    private fun readRewText(file: File, m: Measurement, freqs: DoubleArray): LoadedResponse {
-        val rows = ArrayList<DoubleArray>()
-        val split = Regex("[\\s,;]+")
-        file.readText(Charsets.UTF_8).removePrefix("﻿").lineSequence().forEach { raw ->
-            val line = raw.trim()
-            if (line.isEmpty() || line.startsWith("*") || line.startsWith("#") || line.startsWith("//") || line.startsWith(";")) return@forEach
-            val parts = line.split(split).filter { it.isNotEmpty() }
-            val nums = parts.take(3).map { it.toDoubleOrNull() }
-            if (nums.isEmpty() || nums.any { it == null }) return@forEach
-            require(nums.size >= 3) { "${file.name}: a phase column is required; the band sum depends on relative phase" }
-            // REW's linear-spaced exports can start at 0 Hz, which has no log position: skip it.
-            if (nums[0]!! <= 0.0) return@forEach
-            rows += DoubleArray(3) { nums[it]!! }
+    // REW text conventions, ported from J_DSP's Band Align reader (dsp/bandalign/RewMeasurement.kt)
+    // so both apps read an export the same way.
+    private val delayNote = Regex("""Delay\s+(-?[0-9]+(?:[.,][0-9]+)?)\s*ms""")
+    private val rewBanner = Regex("""Measurement data measured by REW""", RegexOption.IGNORE_CASE)
+    private val smoothingNote = Regex("""^\*\s*Smoothing:\s*(.+)$""")
+    private val spaceOrSemicolon = Regex("""[\s;]+""")
+
+    /**
+     * A data row's frequency, SPL and phase, or null for anything else. Takes tab/space, CSV,
+     * semicolon-separated, and a comma as the decimal point: "20.0 85.3 120.1",
+     * "20.0,85.3,120.1", "20,0;85,3;120,1" and "20,0 85,3 120,1" all read the same.
+     */
+    internal fun rowNumbers(line: String): DoubleArray? {
+        val t = line.trim()
+        if (t.isEmpty()) return null
+        val spaced = t.split(spaceOrSemicolon).map { it.trimEnd(',') }.filter { it.isNotEmpty() }
+        val parts = if (spaced.size >= 3) spaced.map { it.replace(',', '.') } else t.split(',').map { it.trim() }
+        if (parts.size < 3) return null
+        val values = parts.take(3).map { it.toDoubleOrNull() }
+        return if (values.any { it == null }) null else DoubleArray(3) { values[it]!! }
+    }
+
+    /** UTF-8 unless a byte-order mark or UTF-16's zero bytes say otherwise; BOM dropped. */
+    internal fun decode(bytes: ByteArray): String {
+        fun at(i: Int) = if (i < bytes.size) bytes[i].toInt() and 0xFF else -1
+        val text = when {
+            at(0) == 0xFF && at(1) == 0xFE -> String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
+            at(0) == 0xFE && at(1) == 0xFF -> String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
+            else -> {
+                val sample = bytes.size.coerceAtMost(512)
+                val oddZeros = (1 until sample step 2).count { bytes[it].toInt() == 0 }
+                val evenZeros = (0 until sample step 2).count { bytes[it].toInt() == 0 }
+                when {
+                    sample >= 4 && oddZeros > sample / 4 -> String(bytes, Charsets.UTF_16LE)
+                    sample >= 4 && evenZeros > sample / 4 -> String(bytes, Charsets.UTF_16BE)
+                    else -> String(bytes, Charsets.UTF_8)
+                }
+            }
         }
-        require(rows.size >= 8) { "${file.name}: need at least eight frequency/SPL/phase rows" }
-        require(rows.all { r -> r.all { it.isFinite() } }) { "${file.name}: contains non-finite values" }
-        val f = DoubleArray(rows.size) { rows[it][0] }
-        val spl = DoubleArray(rows.size) { rows[it][1] }
-        val deg = DoubleArray(rows.size) { rows[it][2] }
-        require(f.all { it > 0 } && (1 until f.size).all { f[it] > f[it - 1] }) { "${file.name}: frequencies must be positive and strictly increasing" }
+        return text.removePrefix("\uFEFF")
+    }
+
+    private fun readRewText(file: File, m: Measurement, freqs: DoubleArray): LoadedResponse {
+        val f = ArrayList<Double>()
+        val spl = ArrayList<Double>()
+        val deg = ArrayList<Double>()
+        var delayMs = 0.0
+        var smoothing: String? = null
+        var sawHeader = false
+        var sawDelay = false
+        var fromRew = false
+        var phaseMissing = false
+        for (line in decode(file.readBytes()).lineSequence()) {
+            if (line.startsWith("*")) {
+                sawHeader = true
+                if (rewBanner.containsMatchIn(line)) fromRew = true
+                delayNote.find(line)?.let { d ->
+                    sawDelay = true
+                    delayMs = d.groupValues[1].replace(',', '.').toDoubleOrNull()
+                        ?: throw IllegalArgumentException("${file.name}: couldn't read the delay in its header note")
+                }
+                smoothingNote.find(line.trim())?.let { smoothing = it.groupValues[1].trim() }
+                continue
+            }
+            val row = rowNumbers(line)
+            if (row == null) {
+                // Two numbers and nothing else: an export without the phase column.
+                val two = line.trim().split(spaceOrSemicolon).filter { it.isNotEmpty() }
+                if (two.size == 2 && two.all { it.replace(',', '.').toDoubleOrNull() != null }) phaseMissing = true
+                continue
+            }
+            val (freq, db, ph) = Triple(row[0], row[1], row[2])
+            // 0 Hz (linear-spaced exports) has no log position; repeated rows are skipped.
+            if (!freq.isFinite() || !db.isFinite() || !ph.isFinite() || freq <= 0.0) continue
+            if (f.isNotEmpty() && freq <= f.last()) continue
+            f += freq; spl += db; deg += ph
+        }
+        require(!(phaseMissing && f.isEmpty())) { "${file.name}: a phase column is required; the band sum depends on relative phase" }
+        require(f.size >= 16) { "${file.name}: no frequency / SPL / phase rows. Export from REW with File › Export › Measurement as text" }
+        // REW takes the measurement's delay out of the phase and records it only in the header.
+        require(sawHeader) {
+            "${file.name}: has no REW header, which holds the delay REW took out of the phase. Re-export with \"Do not include any comments or headers\" unticked."
+        }
+        // REW writes the note only when it took a delay out, so its own header without one means
+        // 0 ms. Any other header without one can't say what was taken out: refused, not guessed.
+        require(sawDelay || fromRew) {
+            "${file.name}: its header has no \"Delay ... ms\" note, so the delay REW took out of the phase is unknown. Export it from REW with File › Export › Measurement as text."
+        }
         require(f.first() <= freqs.first() * 1.0001 && f.last() >= freqs.last() * 0.9999) {
             "${file.name}: covers %.1f–%.0f Hz but the design needs %.1f–%.0f Hz".format(f.first(), f.last(), freqs.first(), freqs.last())
         }
         require(spl.max() > -180) { "${file.name}: response appears silent" }
         require(spl.all { abs(it) <= 500 }) { "${file.name}: magnitude values exceed ±500 dB" }
+        val fa = f.toDoubleArray()
         // REW can export wrapped or already-unwrapped phase; only unwrap the former, so a long
         // real delay is not folded back into a short one.
         val rad = DoubleArray(deg.size) { deg[it] * PI / 180 }
-        val phase = if (deg.all { abs(it) <= 180.000001 }) unwrap(rad) else rad
-        val logF = DoubleArray(f.size) { ln(f[it]) }
+        val unwrapped = if (deg.all { abs(it) <= 180.000001 }) unwrap(rad) else rad
+        // Put back the delay REW removed (J_DSP's convention: phase − 2π·f·delay).
+        val delay = delayMs / 1000.0
+        val phase = DoubleArray(fa.size) { unwrapped[it] - 2 * PI * fa[it] * delay }
+        val logF = DoubleArray(fa.size) { ln(fa[it]) }
         val logGrid = DoubleArray(freqs.size) { ln(freqs[it]) }
-        val mag = interp(logGrid, logF, spl)
+        val mag = interp(logGrid, logF, spl.toDoubleArray())
         // Phase is interpolated on a linear axis: a delay's phase is linear in frequency, so this
         // is exact for the bulk delay that dominates the unwrapped phase.
-        val ph = interp(freqs, f, phase)
+        val ph = interp(freqs, fa, phase)
         val out = CVec(freqs.size)
         for (i in freqs.indices) {
             val a = 10.0.pow((mag[i] + m.calibrationDb) / 20)
             out.re[i] = a * cos(ph[i])
             out.im[i] = a * sin(ph[i])
         }
-        return LoadedResponse(out, SourceKind.REW_TEXT, null, f.first()..f.last())
+        return LoadedResponse(out, SourceKind.REW_TEXT, null, fa.first()..fa.last(), smoothing, delayMs)
     }
 
     private fun readImpulse(file: File, m: Measurement, freqs: DoubleArray, sampleRate: Int): LoadedResponse {

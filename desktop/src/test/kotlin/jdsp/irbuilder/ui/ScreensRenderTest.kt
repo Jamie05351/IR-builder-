@@ -46,7 +46,7 @@ class ScreensRenderTest {
         for (seat in Seat.entries) for ((pi, pos) in listOf("centre", "pos2", "held").withIndex()) for (ch in Channel.entries) {
             for (b in Band.entries) {
                 val file = File(dir, "${seat.name.lowercase()}_${pos}_${ch.name}_${b.fileName}.txt")
-                val sb = StringBuilder()
+                val sb = StringBuilder("* Measurement data measured by REW V5.40\n")
                 for (i in 0 until 2000) {
                     val f = 10.0 * Math.pow(2200.0, i / 1999.0)
                     fun band(x: Band): Pair<Double, Double> {
