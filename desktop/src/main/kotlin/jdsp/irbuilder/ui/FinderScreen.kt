@@ -103,7 +103,7 @@ fun FinderScreen(state: AppState) {
                 if (f.limits.isNotEmpty()) GlassButton("Reset limits to defaults", { set(f.copy(limits = emptyMap())) }, accent = Jdsp.TextDim)
             }
             state.bandRanges?.let { ranges ->
-                Note("Measured driver paths, with J_DSP's crossover divided out (usable = within 8 dB of the band's typical level; "≤" or "+" = the data ran out first, so it may reach further):")
+                Note("Measured driver paths, with J_DSP's crossover divided out (usable = within 8 dB of the band's typical level; ≤ or + = the data ran out first, so it may reach further):")
                 ranges.forEach { (b, r) ->
                     Note("${b.label}: ${if (r.lowOpen) "≤" else ""}${trimNumber(Math.round(r.lowHz).toDouble())} Hz to ${trimNumber(Math.round(r.highHz).toDouble())} Hz${if (r.highOpen) "+" else ""}", bandColor(b))
                 }
