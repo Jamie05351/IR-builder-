@@ -148,7 +148,7 @@ private fun CompletenessPanel(state: AppState) {
     Panel("Completeness", accent = Jdsp.MGreen) {
         Note(
             if (state.tool == jdsp.irbuilder.Tool.BAND_ALIGN) "Band Align needs the bands of the pairs switched on (Low + Mid, Mid + High). Missing seats or sides are skipped with a warning. Band-limited sweeps are fine if each band covers an octave either side of its crossovers."
-            else "Each seat · position needs Low, Mid and High for both channels. Combined is optional (validates the band sum). Band-limited sweeps are fine if each band covers an octave either side of its crossovers.",
+            else "Phase IRs correct each crossover where both of its bands were measured (Low+Mid for Low/Mid, Mid+High for Mid/High), per channel. Anything without data is left as a pure delay. Combined is optional (validates the band sum). Each band needs to cover an octave either side of the crossovers it's used for.",
         )
         val rows = grid.keys.map { it.seat to it.position }.distinct().sortedWith(compareBy({ it.first }, { it.second }))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

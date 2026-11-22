@@ -57,7 +57,7 @@ fun PreviewScreen(state: AppState) {
                 Seat.entries.forEach { s -> Chip("${s.label} average", view == View.SeatAvg(s), { view = View.SeatAvg(s) }, Jdsp.Purple) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                d.set.groups.filter { it.key.channel == channel && it.isComplete }.forEach { g ->
+                d.set.groups.filter { it.key.channel == channel && it.crossovers().isNotEmpty() }.forEach { g ->
                     val v = View.Position(g.key.seat, g.key.position)
                     Chip("${g.key.seat.label} · ${g.key.position}" + if (g.validationOnly) " (val.)" else "", view == v, { view = v }, if (g.validationOnly) Jdsp.Orange else Jdsp.LightBlue)
                 }
@@ -66,7 +66,7 @@ fun PreviewScreen(state: AppState) {
 
         val curves: Triple<DoubleArray, DoubleArray, DoubleArray>? = when (val v = view) {
             is View.SeatAvg -> d.seatAverage(v.seat, channel)?.let { Triple(it.beforeDb, it.afterDb, it.coherentDb) }
-            is View.Position -> d.set.groups.firstOrNull { it.key.seat == v.seat && it.key.position == v.position && it.key.channel == channel && it.isComplete }?.let { g ->
+            is View.Position -> d.set.groups.firstOrNull { it.key.seat == v.seat && it.key.position == v.position && it.key.channel == channel && it.crossovers().isNotEmpty() }?.let { g ->
                 val b = g.branchSum()
                 val a = d.predicted(g)
                 Triple(DoubleArray(f.size) { db(b.abs(it)) }, DoubleArray(f.size) { db(a.abs(it)) }, DoubleArray(f.size) { i -> db(Band.BRANCHES.sumOf { g.branch(it).abs(i) }) })
@@ -141,17 +141,21 @@ private fun ResultsPanel(d: PhaseDesign) {
 
 @Composable
 private fun ResultRow(label: String, regions: List<RegionMetrics>, bad: Boolean, color: Color) {
-    val lm = regions.first { it.crossover == Crossover.LOW_MID.label }
-    val mh = regions.first { it.crossover == Crossover.MID_HIGH.label }
+    // A crossover that wasn't corrected for this position (no data) shows as a dash.
+    val lm = regions.firstOrNull { it.crossover == Crossover.LOW_MID.label }
+    val mh = regions.firstOrNull { it.crossover == Crossover.MID_HIGH.label }
     fun cell(b: Double, a: Double) = "%.1f → %.1f dB".format(b, a)
     fun c(b: Double, a: Double) = if (a < b - 0.25) Jdsp.MRed else if (a > b + 0.25) Jdsp.MGreen else Color.White
+    @Composable
+    fun pair(r: RegionMetrics?, mean: Boolean) {
+        if (r == null) Cell("not corrected", 150, Jdsp.TextDim)
+        else if (mean) Cell(cell(r.beforeMeanDb, r.afterMeanDb), 150, c(r.beforeMeanDb, r.afterMeanDb))
+        else Cell(cell(r.beforeWorstDb, r.afterWorstDb), 150, c(r.beforeWorstDb, r.afterWorstDb))
+    }
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Cell(label + if (bad) "  ▲ worse" else "", 260, if (bad) Jdsp.MRed else color)
-        Cell(cell(lm.beforeMeanDb, lm.afterMeanDb), 150, c(lm.beforeMeanDb, lm.afterMeanDb))
-        Cell(cell(lm.beforeWorstDb, lm.afterWorstDb), 150, c(lm.beforeWorstDb, lm.afterWorstDb))
-        Cell(cell(mh.beforeMeanDb, mh.afterMeanDb), 150, c(mh.beforeMeanDb, mh.afterMeanDb))
-        Cell(cell(mh.beforeWorstDb, mh.afterWorstDb), 150, c(mh.beforeWorstDb, mh.afterWorstDb))
-        Cell("%+.1f / %+.1f dB".format(lm.levelChangeMaxDb, mh.levelChangeMaxDb), 150)
+        pair(lm, true); pair(lm, false); pair(mh, true); pair(mh, false)
+        Cell(listOf(lm, mh).joinToString(" / ") { r -> r?.let { "%+.1f".format(it.levelChangeMaxDb) } ?: "–" } + " dB", 150)
     }
 }
 

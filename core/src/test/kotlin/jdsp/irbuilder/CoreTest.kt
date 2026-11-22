@@ -189,7 +189,8 @@ class ChecksTest {
         val ms = Fixtures.measurementSet().filterNot { it.seat == Seat.PASSENGER && it.band == Band.HIGH && it.position == "p2" && it.channel == Channel.R }
         val mixed = ms.mapIndexed { i, m -> if (i == 0) m.copy(timingReference = "other") else m }
         val result = Checks.run(MeasurementSet.load(mixed, DesignOptions()))
-        assertTrue(result.items.any { it.severity == Severity.ERROR && it.title.contains("incomplete") })
+        // A missing band only leaves that crossover uncorrected at that position.
+        assertTrue(result.items.any { it.severity == Severity.WARNING && it.title.contains("not used for Mid/High correction") })
         assertTrue(result.items.any { it.severity == Severity.ERROR && it.title.contains("timing reference") })
         assertFalse(result.canDesign)
     }
@@ -198,7 +199,7 @@ class ChecksTest {
     fun allPositionsValidationOnlyLeavesNoDesignData() {
         val ms = Fixtures.measurementSet(positions = listOf("c"), validationPositions = setOf("c"))
         val result = Checks.run(MeasurementSet.load(ms, DesignOptions()))
-        assertTrue(result.items.any { it.severity == Severity.ERROR && it.title.startsWith("No design data") })
+        assertTrue(result.items.any { it.severity == Severity.ERROR && it.title == "Nothing to correct" })
     }
 
     @Test

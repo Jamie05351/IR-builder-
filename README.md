@@ -26,7 +26,9 @@ measurements; neither runs the other.
   best at both seats, never making a seat worse and only for at least 0.5 dB. Result: a list of
   settings to enter on J_DSP's DELAY page. No added latency.
 - **Phase IRs** (Measurements → Checks → Design → Preview → Export): phase-only Low/Mid/High FIRs for
-  the convolver's Per-band mode, designed on the measurements as taken.
+  the convolver's Per-band mode, designed on the measurements as taken. Each crossover is corrected
+  per channel where both of its bands were measured; a channel, crossover or band without data is
+  left as a pure delay, so one channel or Low+Mid only works. All three WAVs are always exported.
 
 Recommended order: Band Align → enter the changes in J_DSP → re-measure → Phase IRs from the fresh
 sweeps. Projects remember which tool they belong to.

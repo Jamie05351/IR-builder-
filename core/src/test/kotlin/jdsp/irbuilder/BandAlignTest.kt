@@ -232,8 +232,8 @@ class BandLimitedAndPartialSetsTest {
         val r = BandAlign.solve(set, a)
         assertTrue(r.results.all { it.pair == AlignPair.LOW_MID } && r.results.size == 2)
         assertTrue(r.results.all { it.proposal != null })
-        // The Phase IRs still insist on all three bands.
-        assertFalse(Checks.run(set).canDesign)
+        // The Phase IRs can run on these too: Low/Mid corrected, Mid/High left as pure delay.
+        assertTrue(Checks.run(set, CheckScope.phaseIrs(ms)).canDesign)
     }
 
     @Test
@@ -370,5 +370,117 @@ class MissingPairBandTest {
         val m = Measurement(file.path, Seat.DRIVER, "c", Channel.L, Band.MID, "R")
         val set = MeasurementSet.load(listOf(m), DesignOptions(), setOf(Crossover.LOW_MID))
         assertTrue(set.loadErrors.single().message.contains("75–300 Hz"), set.loadErrors.single().message)
+    }
+}
+
+class PartialPhaseIrTest {
+    private fun files(dir: java.io.File, bands: List<Band>, channels: List<Channel> = Channel.entries, seats: List<Seat> = Seat.entries): List<Measurement> {
+        val out = ArrayList<Measurement>()
+        for (seat in seats) for (ch in channels) for (b in bands) {
+            val file = java.io.File(dir, "${seat.name}_c_${ch.name}_${b.fileName}.txt")
+            Fixtures.writeRew(file, { f -> Fixtures.band(b, f, delaySeconds = when (b) { Band.MID -> 0.0012; Band.HIGH -> 0.0013; else -> 0.0 }) })
+            out += Measurement(file.path, seat, "c", ch, b, if (ch == Channel.L) "R" else "L")
+        }
+        return out
+    }
+
+    private val o = DesignOptions(taps = 8192, latencyFrames = 4096)
+    private fun isPureDelay(x: FloatArray, at: Int): Boolean {
+        val peak = x.indices.maxBy { kotlin.math.abs(x[it]) }
+        val rest = x.indices.filter { it != peak }.sumOf { x[it].toDouble() * x[it] }
+        return peak == at && rest < 1e-8 * x[peak] * x[peak]
+    }
+
+    @Test
+    fun lowAndMidOnlyCorrectsLowMidAndLeavesHighAsDelay() {
+        val ms = files(kotlin.io.path.createTempDirectory("irb").toFile(), listOf(Band.LOW, Band.MID))
+        val set = MeasurementSet.load(ms, o, CheckScope.phaseIrs(ms).crossovers.toSet())
+        val d = Designer.design(set)
+        assertEquals(listOf(Crossover.LOW_MID), d.corrected[0])
+        for (ci in 0 until 2) assertTrue(isPureDelay(d.impulses[2][ci], o.latencyFrames), "High IR should be a pure delay")
+        assertTrue(d.report.bands.first { it.band == Band.MID && it.channel == Channel.L }.maxPhaseDeg > 5)
+        d.report.positions.forEach { p -> assertEquals(listOf("Low/Mid"), p.regions.map { it.crossover }) }
+        assertTrue(d.report.warnings.any { it.contains("Mid/High not corrected") })
+        // The package still has all three WAVs for J_DSP's per-band mode.
+        val dir = kotlin.io.path.createTempDirectory("irb-out").toFile()
+        Exporter.export(d, dir)
+        assertTrue(listOf("low.wav", "mid.wav", "high.wav").all { java.io.File(dir, it).isFile })
+    }
+
+    @Test
+    fun oneChannelOnlyLeavesTheOtherChannelAsDelay() {
+        val ms = files(kotlin.io.path.createTempDirectory("irb").toFile(), Band.BRANCHES, channels = listOf(Channel.L))
+        val d = Designer.design(MeasurementSet.load(ms, o))
+        assertEquals(Crossover.entries, d.corrected[Channel.L.ordinal])
+        assertTrue(d.corrected[Channel.R.ordinal].isEmpty())
+        for (bi in 0 until 3) assertTrue(isPureDelay(d.impulses[bi][Channel.R.ordinal], o.latencyFrames))
+        assertTrue(d.report.warnings.any { it.contains("Right channel: no measurements") })
+        assertTrue(d.report.positions.isNotEmpty() && d.report.positions.all { it.channel == Channel.L })
+    }
+
+    @Test
+    fun oneSeatOnlyDesignsWithAWarning() {
+        val ms = files(kotlin.io.path.createTempDirectory("irb").toFile(), Band.BRANCHES, seats = listOf(Seat.DRIVER))
+        val c = Checks.run(MeasurementSet.load(ms, o), CheckScope.phaseIrs(ms))
+        assertTrue(c.canDesign)
+        assertTrue(c.items.any { it.severity == Severity.WARNING && it.title.contains("Driver seat only") })
+        val d = Designer.design(MeasurementSet.load(ms, o))
+        assertTrue(d.report.positions.all { it.seat == Seat.DRIVER && !it.deteriorated })
+    }
+}
+
+class MixedPartialPositionsTest {
+    private fun write(dir: java.io.File, seat: Seat, pos: String, ch: Channel, bands: List<Band>, combined: Boolean = false, midLate: Double = 0.0012): List<Measurement> {
+        val out = ArrayList<Measurement>()
+        for (b in bands) {
+            val file = java.io.File(dir, "${seat.name}_${pos}_${ch.name}_${b.fileName}.txt")
+            Fixtures.writeRew(file, { f -> Fixtures.band(b, f, delaySeconds = if (b == Band.MID) midLate else 0.0) })
+            out += Measurement(file.path, seat, pos, ch, b, "ref-${ch.name}")
+        }
+        if (combined) {
+            val file = java.io.File(dir, "${seat.name}_${pos}_${ch.name}_combined.txt")
+            Fixtures.writeRew(file, { f -> Band.BRANCHES.map { b -> Fixtures.band(b, f, delaySeconds = if (b == Band.MID) midLate else 0.0) }.reduce { x, y -> x + y } })
+            out += Measurement(file.path, seat, pos, ch, Band.COMBINED, "ref-${ch.name}")
+        }
+        return out
+    }
+    private val o = DesignOptions(taps = 8192, latencyFrames = 4096)
+
+    @Test
+    fun midHighOnlyPositionsDoNotDiluteASeatsLowMidWeight() {
+        // Driver: one Low/Mid position (Mid 1.2 ms late) + nine Mid/High positions. Passenger: one
+        // Low/Mid position with Mid aligned. With equal seat weights the Low/Mid correction must be
+        // the same as with the Mid/High positions removed.
+        val dir = kotlin.io.path.createTempDirectory("irb").toFile()
+        val base = ArrayList<Measurement>()
+        for (ch in Channel.entries) {
+            base += write(dir, Seat.DRIVER, "lm", ch, listOf(Band.LOW, Band.MID))
+            base += write(dir, Seat.PASSENGER, "lm", ch, listOf(Band.LOW, Band.MID), midLate = 0.0)
+        }
+        val extra = Channel.entries.flatMap { ch -> (1..9).flatMap { write(dir, Seat.DRIVER, "mh$it", ch, listOf(Band.MID, Band.HIGH)) } }
+        val a = Designer.design(MeasurementSet.load(base, o))
+        val b = Designer.design(MeasurementSet.load(base + extra, o))
+        val f = a.freqs
+        val i150 = f.indexOfFirst { it >= 150.0 }
+        for (bi in 0 until 2) assertEquals(a.designedPhase[0][bi][i150], b.designedPhase[0][bi][i150], 1e-9)
+    }
+
+    @Test
+    fun seatFiguresUseOnlyPositionsThatMeasuredTheCrossover() {
+        // Driver measured only Low/Mid, Passenger only Mid/High: each seat reports only its own crossover.
+        val dir = kotlin.io.path.createTempDirectory("irb").toFile()
+        val ms = Channel.entries.flatMap { ch -> write(dir, Seat.DRIVER, "a", ch, listOf(Band.LOW, Band.MID)) + write(dir, Seat.PASSENGER, "b", ch, listOf(Band.MID, Band.HIGH)) }
+        val d = Designer.design(MeasurementSet.load(ms, o))
+        d.report.seats.filter { it.seat == Seat.DRIVER }.forEach { assertEquals(listOf("Low/Mid"), it.regions.map { r -> r.crossover }) }
+        d.report.seats.filter { it.seat == Seat.PASSENGER }.forEach { assertEquals(listOf("Mid/High"), it.regions.map { r -> r.crossover }) }
+    }
+
+    @Test
+    fun combinedIsNotComparedWithAnIncompleteBandSum() {
+        val dir = kotlin.io.path.createTempDirectory("irb").toFile()
+        val ms = Seat.entries.flatMap { s -> Channel.entries.flatMap { ch -> write(dir, s, "c", ch, listOf(Band.LOW, Band.MID), combined = true) } }
+        val d = Designer.design(MeasurementSet.load(ms, o))
+        assertTrue(d.report.positions.all { it.combinedVsBranchSumRelativeError == null })
+        assertTrue(d.report.warnings.none { it.contains("combined sweep disagrees") })
     }
 }
