@@ -26,10 +26,13 @@ fun ChecksScreen(state: AppState) {
         Panel("Measurement setup", accent = Jdsp.Cyan) {
             val o = state.options
             fun set(n: DesignOptions) = state.updateOptions(n)
-            Note("Used by both tools. Enter the crossover corners J_DSP had during the sweeps: Band Align scores around them and the Phase IRs correct around them.")
+            val finder = state.tool == jdsp.irbuilder.Tool.CROSSOVER_FINDER
+            Note(if (finder) "The Crossover Finder takes J_DSP's crossovers from its own page; the sweeps are checked around them." else "Used by Band Align and Phase IRs. Enter the crossover corners J_DSP had during the sweeps: Band Align scores around them and the Phase IRs correct around them.")
             Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.Bottom) {
-                Labeled("Low/Mid crossover (Hz)") { NumberField(o.lowMidHz, { set(o.copy(lowMidHz = it)) }, accent = Jdsp.LowBand) }
-                Labeled("Mid/High crossover (Hz)") { NumberField(o.midHighHz, { set(o.copy(midHighHz = it)) }, accent = Jdsp.HighBand) }
+                if (!finder) {
+                    Labeled("Low/Mid crossover (Hz)") { NumberField(o.lowMidHz, { set(o.copy(lowMidHz = it)) }, accent = Jdsp.LowBand) }
+                    Labeled("Mid/High crossover (Hz)") { NumberField(o.midHighHz, { set(o.copy(midHighHz = it)) }, accent = Jdsp.HighBand) }
+                }
                 Labeled("Sample rate (impulse WAVs)") {
                     GlassDropdown(o.sampleRate, listOf(48000, 44100), { "$it Hz" }, { rate ->
                         val taps = if (rate == 44100) minOf(o.taps, 32768) else o.taps
@@ -44,7 +47,7 @@ fun ChecksScreen(state: AppState) {
                 }
             }
             Note("Complex (vector) smoothing applied to every file as it's read, so the checks, Band Align, the phase solver and the plots all use the same data. Each file's arrival time is taken out first and put back after, so phase stays exact. 1/24 suits most car measurements; 1/12 for noisy ones. Changing any of these re-reads the files.")
-            runCatching { o.validateMeasurement() }.exceptionOrNull()?.message?.let { Note(it, Jdsp.MRed) }
+            runCatching { state.effectiveOptions().validateMeasurement() }.exceptionOrNull()?.message?.let { Note(it, Jdsp.MRed) }
         }
         Panel("Measurement checks", accent = Jdsp.MGreen, trailing = {
             GlassButton("Run checks", { state.runChecks() }, accent = Jdsp.MGreen, enabled = state.measurements.isNotEmpty() && state.busy == null)
@@ -58,7 +61,11 @@ fun ChecksScreen(state: AppState) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Badge("${c.errors} errors", if (c.errors > 0) Jdsp.MRed else Jdsp.MGreen)
                 Badge("${c.warnings} warnings", if (c.warnings > 0) Jdsp.MidYellow else Jdsp.MGreen)
-                val ready = if (state.tool == jdsp.irbuilder.Tool.BAND_ALIGN) "Ready for Band Align" else "Ready to design"
+                val ready = when (state.tool) {
+                    jdsp.irbuilder.Tool.BAND_ALIGN -> "Ready for Band Align"
+                    jdsp.irbuilder.Tool.CROSSOVER_FINDER -> "Ready for the Crossover Finder"
+                    else -> "Ready to design"
+                }
                 Badge(if (c.canDesign) ready else "Fix errors first", if (c.canDesign) Jdsp.MGreen else Jdsp.MRed)
             }
             c.items.forEach { item ->

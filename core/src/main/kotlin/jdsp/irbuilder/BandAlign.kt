@@ -141,11 +141,24 @@ object BandAlign {
             }
         }
         val proposals = results.mapNotNull { r -> r.proposal?.let { Triple(r.pair.moving, r.channel, it) } }
+        val t = assemble(align.timing, proposals)
+        return BandAlignReport(f, results, t.offsetMs, t.timing, t.changes, t.error, align.timing)
+    }
+
+    /** New timing from proposals, with every delay made later together when one is negative. */
+    class Assembled(val offsetMs: Double, val timing: JdspTiming?, val changes: List<SettingChange>, val error: String?)
+
+    /**
+     * Applies [proposals] (band, side, new setting) to [original]. A negative delay becomes 0 with
+     * every delay made later by the same amount; the result is rounded to J_DSP's 0.01 ms steps,
+     * or null with an error when it doesn't fit J_DSP's range.
+     */
+    fun assemble(original: JdspTiming, proposals: List<Triple<Band, Channel, BandSetting>>): Assembled {
         val offset = (-(proposals.minOfOrNull { it.third.delayMs } ?: 0.0)).coerceAtLeast(0.0)
-        var newTiming: JdspTiming? = align.timing
+        var newTiming: JdspTiming? = original
         var error: String? = null
         if (proposals.isNotEmpty()) {
-            var t = align.timing
+            var t = original
             for ((band, ch, p) in proposals) t = t.with(band, ch, p)
             if (offset > 0) for (b in Band.BRANCHES) for (c in Channel.entries) {
                 val s = t.get(b, c)
@@ -162,12 +175,12 @@ object BandAlign {
         }
         val changes = if (newTiming == null) emptyList() else Band.BRANCHES.flatMap { b ->
             Channel.entries.mapNotNull { c ->
-                val from = align.timing.get(b, c)
+                val from = original.get(b, c)
                 val to = newTiming.get(b, c)
                 if (abs(from.delayMs - to.delayMs) > 1e-6 || from.inverted != to.inverted) SettingChange(b, c, from, to) else null
             }
         }
-        return BandAlignReport(f, results, offset.roundTo(DELAY_STEP_MS), newTiming, changes, error, align.timing)
+        return Assembled(offset.roundTo(DELAY_STEP_MS), newTiming, changes, error)
     }
 
     private fun solvePair(

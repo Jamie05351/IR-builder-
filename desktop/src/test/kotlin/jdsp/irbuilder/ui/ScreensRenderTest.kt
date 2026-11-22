@@ -104,6 +104,8 @@ class ScreensRenderTest {
         state.checks = Checks.run(set)
         state.alignment = jdsp.irbuilder.BandAlign.solve(set, state.align)
         state.design = Designer.design(set)
+        state.updateFinder(state.finder.copy(timing = state.align.timing))
+        state.finding = jdsp.irbuilder.CrossoverFinder.solve(set, state.finder)
         for (tool in jdsp.irbuilder.Tool.entries) {
             state.tool = tool
             stepsFor(tool).forEachIndexed { i, step ->

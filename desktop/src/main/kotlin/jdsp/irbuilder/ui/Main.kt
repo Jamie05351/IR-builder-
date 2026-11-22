@@ -38,7 +38,7 @@ private fun StartScreen(state: AppState) {
         Panel("What do you want to do?", accent = Jdsp.Orange, trailing = {
             GlassButton("Open project…", { Dialogs.openFiles("Open project", listOf("jirb"), multiple = false)?.firstOrNull()?.let(state::openProject) }, accent = Jdsp.Purple)
         }) {
-            Note("Two independent tools. Both start from REW band-solo sweeps at both seats. For the best result use Band Align first, enter its changes in J_DSP, re-measure, then design Phase IRs from the fresh sweeps.", Color.White)
+            Note("Three independent tools. All start from REW band-solo sweeps at both seats. For the best result: Crossover Finder (or Band Align if the crossovers stay), enter the changes in J_DSP, re-measure, then design Phase IRs from the fresh sweeps.", Color.White)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             ToolCard(
@@ -62,6 +62,17 @@ private fun StartScreen(state: AppState) {
                     "Adds about 192 ms latency by default (adjustable).",
                 ),
                 "Steps: Measurements → Checks → Design → Preview → Export",
+            )
+            ToolCard(
+                state, Tool.CROSSOVER_FINDER, Jdsp.Orange, Modifier.weight(1f),
+                "Which J_DSP crossovers to use",
+                listOf(
+                    "Searches each crossover's frequency and slope, with each side's delay and polarity, for the bands to add up best at both seats.",
+                    "Reuses your band-solo sweeps: J_DSP's current filter is divided out exactly, others tried where the data is reliable.",
+                    "Stays within the frequency limits and slopes you allow; never makes a seat worse.",
+                    "Result: crossover, delay and polarity settings to enter in J_DSP. No added latency.",
+                ),
+                "Steps: Measurements → Checks → Crossover Finder",
             )
         }
         if (state.measurements.isNotEmpty()) Note("${state.measurements.size} imported measurement(s) stay loaded when you switch tools.")
@@ -104,6 +115,7 @@ fun App(state: AppState) {
                         Step.MEASUREMENTS -> MeasurementsScreen(state)
                         Step.CHECKS -> ChecksScreen(state)
                         Step.BAND_ALIGN -> BandAlignScreen(state)
+                        Step.FINDER -> FinderScreen(state)
                         Step.DESIGN -> DesignScreen(state)
                         Step.PREVIEW -> PreviewScreen(state)
                         Step.EXPORT -> ExportScreen(state)
@@ -157,7 +169,8 @@ private fun Sidebar(state: AppState) {
             when (tool) {
                 Tool.BAND_ALIGN -> "Band Align proposes J_DSP delay and polarity changes. Make them, then re-measure before designing IRs."
                 Tool.PHASE_IRS -> "Phase-only, correction-only IRs: J_DSP's crossovers, PEQ and delays stay as measured. Verify with fresh measurements."
-                null -> "Two separate tools. Each starts from its own measurements."
+                Tool.CROSSOVER_FINDER -> "Crossover Finder proposes J_DSP crossover, delay and polarity changes within your limits. Make them, then re-measure."
+                null -> "Three separate tools. Each starts from its own measurements."
             },
         )
     }
@@ -167,6 +180,7 @@ private fun stepStatus(state: AppState, s: Step): Pair<String?, Color> = when (s
     Step.MEASUREMENTS -> (if (state.measurements.isEmpty()) null else "${state.measurements.size}") to Jdsp.LightBlue
     Step.CHECKS -> state.checks?.let { if (it.errors > 0) "${it.errors}✕" to Jdsp.MRed else if (it.warnings > 0) "${it.warnings}!" to Jdsp.MidYellow else "✓" to Jdsp.MGreen } ?: (null to Color.White)
     Step.BAND_ALIGN -> state.alignment?.let { if (it.error != null) "!" to Jdsp.MRed else if (it.hasChanges) "${it.changes.size}" to Jdsp.MGreen else "✓" to Jdsp.MGreen } ?: (null to Color.White)
+    Step.FINDER -> state.finding?.let { if (it.error != null) "!" to Jdsp.MRed else if (it.hasChanges) "${it.filterChanges.size + it.timingChanges.size}" to Jdsp.MGreen else "✓" to Jdsp.MGreen } ?: ((if (state.finderError != null) "!" else null) to Jdsp.MRed)
     Step.DESIGN -> (if (state.optionsError != null) "!" else null) to Jdsp.MRed
     Step.PREVIEW -> (if (state.hasDesign) "✓" else null) to Jdsp.MGreen
     Step.EXPORT -> (if (state.exportedZip != null) "✓" else null) to Jdsp.MGreen

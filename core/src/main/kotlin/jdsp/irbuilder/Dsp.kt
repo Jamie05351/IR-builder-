@@ -23,6 +23,28 @@ class CVec(val re: DoubleArray, val im: DoubleArray) {
     fun arg(i: Int) = atan2(im[i], re[i])
     fun copy() = CVec(re.copyOf(), im.copyOf())
 
+    /** Bin-by-bin product. */
+    fun times(o: CVec): CVec {
+        val out = CVec(size)
+        for (i in 0 until size) {
+            out.re[i] = re[i] * o.re[i] - im[i] * o.im[i]
+            out.im[i] = re[i] * o.im[i] + im[i] * o.re[i]
+        }
+        return out
+    }
+
+    /** Bin-by-bin quotient (a zero divisor bin gives zero). */
+    fun div(o: CVec): CVec {
+        val out = CVec(size)
+        for (i in 0 until size) {
+            val d = o.re[i] * o.re[i] + o.im[i] * o.im[i]
+            if (d <= 0.0) continue
+            out.re[i] = (re[i] * o.re[i] + im[i] * o.im[i]) / d
+            out.im[i] = (im[i] * o.re[i] - re[i] * o.im[i]) / d
+        }
+        return out
+    }
+
     /** Multiplies every bin by exp(-j·2π·f·delay). */
     fun delayed(freqs: DoubleArray, delaySeconds: Double): CVec {
         val out = CVec(size)

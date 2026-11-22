@@ -4,11 +4,12 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
 
-/** The two independent tools the app offers; a project belongs to one. */
+/** The independent tools the app offers; a project belongs to one. */
 @Serializable
 enum class Tool(val title: String) {
     BAND_ALIGN("Band Align"),
     PHASE_IRS("Phase IRs"),
+    CROSSOVER_FINDER("Crossover Finder"),
 }
 
 /** A saved session: the measurement list with its tags, and the design settings. */
@@ -21,6 +22,7 @@ data class Project(
     val measurements: List<Measurement> = emptyList(),
     val options: DesignOptions = DesignOptions(),
     val align: AlignOptions = AlignOptions(),
+    val finder: FinderOptions = FinderOptions(),
     val notes: String = "",
 ) {
     companion object {

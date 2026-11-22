@@ -32,6 +32,7 @@ enum class Step(val title: String, val subtitle: String) {
     MEASUREMENTS("Measurements", "Import and tag"),
     CHECKS("Checks", "Timing, quality, completeness"),
     BAND_ALIGN("Band Align", "Delay & polarity"),
+    FINDER("Crossover Finder", "Frequency, slope, delay"),
     DESIGN("Design", "Crossovers, limits, seats"),
     PREVIEW("Preview", "Predicted result"),
     EXPORT("Export", "Package for J_DSP"),
@@ -41,6 +42,7 @@ enum class Step(val title: String, val subtitle: String) {
 fun stepsFor(tool: Tool): List<Step> = when (tool) {
     Tool.BAND_ALIGN -> listOf(Step.MEASUREMENTS, Step.CHECKS, Step.BAND_ALIGN)
     Tool.PHASE_IRS -> listOf(Step.MEASUREMENTS, Step.CHECKS, Step.DESIGN, Step.PREVIEW, Step.EXPORT)
+    Tool.CROSSOVER_FINDER -> listOf(Step.MEASUREMENTS, Step.CHECKS, Step.FINDER)
 }
 
 /** Tags applied to newly added files (filename auto-tagging may override them). */
@@ -81,6 +83,10 @@ class AppState(private var scope: CoroutineScope) {
         private set
     var alignError by mutableStateOf<String?>(null)
     var alignment by mutableStateOf<BandAlignReport?>(null)
+    var finder by mutableStateOf(jdsp.irbuilder.FinderOptions())
+        private set
+    var finderError by mutableStateOf<String?>(null)
+    var finding by mutableStateOf<jdsp.irbuilder.FinderReport?>(null)
     var busy by mutableStateOf<String?>(null)
     var status by mutableStateOf("Import software-band-solo sweeps for both seats and both channels.")
     var errorMessage by mutableStateOf<String?>(null)
@@ -93,9 +99,29 @@ class AppState(private var scope: CoroutineScope) {
         checks = null
         set = null
         alignment = null
+        finding = null
         design = null
         stereoDesign = null
         exportedZip = null
+    }
+
+    /**
+     * The settings measurements are read with. The Crossover Finder takes its crossover corners
+     * from its own page (J_DSP's filters as set), so the sweeps are checked around those.
+     */
+    fun effectiveOptions(): DesignOptions =
+        if (tool == Tool.CROSSOVER_FINDER) options.copy(lowMidHz = finder.current.lowMidHz, midHighHz = finder.current.midHighHz) else options
+
+    /** Crossover Finder inputs changed: its result goes; the checks too if what they cover changed. */
+    fun updateFinder(f: jdsp.irbuilder.FinderOptions) {
+        val old = finder
+        if (f.crossovers != old.crossovers || f.current.lowMidHz != old.current.lowMidHz || f.current.midHighHz != old.current.midHighHz) {
+            checks = null
+            set = null
+        }
+        finder = f
+        finderError = runCatching { f.validate() }.exceptionOrNull()?.message
+        finding = null
     }
 
     /** Opens a tool from the start screen. Imported measurements are kept. */
@@ -105,7 +131,11 @@ class AppState(private var scope: CoroutineScope) {
         status = when (t) {
             Tool.BAND_ALIGN -> "Band Align: import Low/Mid/High band-solo sweeps for both seats, then enter J_DSP's delays."
             Tool.PHASE_IRS -> "Phase IRs: import software-band-solo sweeps for both seats and both channels."
+            Tool.CROSSOVER_FINDER -> "Crossover Finder: import Low/Mid/High band-solo sweeps for both seats, then enter J_DSP's crossovers and delays."
         }
+        // The crossover corners the checks use depend on the tool.
+        checks = null
+        set = null
     }
 
     /** Band Align inputs changed: its result goes, the checks stay valid. */
@@ -197,8 +227,8 @@ class AppState(private var scope: CoroutineScope) {
     }
 
     /** A background result is only published if the inputs it was computed from are still current. */
-    private fun inputsChangedSince(snapshot: List<Measurement>, o: DesignOptions, a: AlignOptions = align) =
-        measurements.toList() != snapshot || options != o || align != a
+    private fun inputsChangedSince(snapshot: List<Measurement>, o: DesignOptions, a: AlignOptions = align, f: jdsp.irbuilder.FinderOptions = finder) =
+        measurements.toList() != snapshot || effectiveOptions() != o || align != a || finder != f
 
     /** The loaded set and its checks, reusing what's current. */
     /** Stereo mode reads only the Combined sweeps; band-solo files aren't used by it. */
@@ -216,6 +246,7 @@ class AppState(private var scope: CoroutineScope) {
     /** What the current tool requires of the measurements. */
     fun checkScope(): CheckScope = when {
         tool == Tool.BAND_ALIGN -> CheckScope.bandAlign(align, measurements.toList())
+        tool == Tool.CROSSOVER_FINDER -> CheckScope.crossoverFinder(finder, measurements.toList())
         options.irMode == jdsp.irbuilder.IrMode.STEREO -> CheckScope.STEREO
         else -> CheckScope.phaseIrs(measurements.toList())
     }
@@ -227,6 +258,7 @@ class AppState(private var scope: CoroutineScope) {
     private fun publish(s: MeasurementSet, c: CheckResult) {
         if (s !== set) {
             alignment = null
+            finding = null
             design = null
             stereoDesign = null
             exportedZip = null
@@ -257,10 +289,33 @@ class AppState(private var scope: CoroutineScope) {
         }
     }
 
+    fun runFinder() = background("Searching crossovers, slopes, delays and polarity…") {
+        val snapshot = measurements.toList()
+        val o = effectiveOptions()
+        val f = finder
+        val (s, c, r) = withContext(Dispatchers.Default) {
+            val (s, c) = loadAndCheck(snapshot, o, CheckScope.crossoverFinder(f, snapshot))
+            Triple(s, c, if (c.canDesign) jdsp.irbuilder.CrossoverFinder.solve(s, f) else null)
+        }
+        if (inputsChangedSince(snapshot, o, f = f)) {
+            status = "Inputs changed while searching; run the Crossover Finder again."
+            return@background
+        }
+        publish(s, c)
+        finding = r
+        if (r == null) {
+            status = "Crossover Finder blocked: ${c.errors} error(s) on the Checks page."
+            step = Step.CHECKS
+        } else {
+            val n = r.filterChanges.size + r.timingChanges.size
+            status = r.error ?: if (r.hasChanges) "Crossover Finder: $n J_DSP setting(s) to change." else "Crossover Finder: the current crossovers are already best; no changes."
+        }
+    }
+
     fun runChecks(then: (() -> Unit)? = null) = background("Reading measurements and running checks…") {
         val snapshot = measurements.toList()
         val scope = checkScope()
-        val o = options
+        val o = effectiveOptions()
         val (s, c) = withContext(Dispatchers.Default) {
             val s = MeasurementSet.load(inputs(snapshot, o), o, scope.crossovers.toSet())
             s to Checks.run(s, scope)
@@ -318,7 +373,7 @@ class AppState(private var scope: CoroutineScope) {
 
     fun saveProject(file: File) = background("Saving project…") {
         val f = if (file.extension.equals(Project.EXTENSION, true)) file else File(file.path + "." + Project.EXTENSION)
-        withContext(Dispatchers.IO) { Project.save(Project(tool = tool, measurements = measurements.toList(), options = options, align = align), f) }
+        withContext(Dispatchers.IO) { Project.save(Project(tool = tool, measurements = measurements.toList(), options = options, align = align, finder = finder), f) }
         projectFile = f
         status = "Saved ${f.name}"
     }
@@ -330,6 +385,7 @@ class AppState(private var scope: CoroutineScope) {
         selected.clear()
         updateOptions(p.options)
         updateAlign(p.align)
+        updateFinder(p.finder)
         tool = p.tool ?: Tool.PHASE_IRS
         step = Step.MEASUREMENTS
         projectFile = file
