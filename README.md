@@ -30,6 +30,17 @@ measurements; neither runs the other.
   per channel where both of its bands were measured; a channel, crossover or band without data is
   left as a pure delay, so one channel or Low+Mid only works. All three WAVs are always exported.
 
+The Phase IRs tool has two convolver modes, chosen on its Design page, matching J_DSP's convolver:
+
+- **Per-band (Low/Mid/High)**: three stereo IRs before the band sum that align the bands to each
+  other at the crossovers (exported as `band-ir-package.zip`).
+- **Stereo (after the band sum)**: one stereo IR (`stereo-phase-ir.wav`) for the Stereo slot. From
+  one Combined sweep per channel per position, it removes the phase rotation of the summed response
+  (crossovers and speakers) toward one arrival time at both seats, phase-only, between a chosen
+  range (40 Hz–10 kHz by default). It acts on every band alike, so it can't fix cancellation between
+  bands; Band Align or Per-band do that. Low-frequency linearisation needs a few ms of shift, so the
+  maximum shift is raised to 5 ms when Stereo is chosen.
+
 Recommended order: Band Align → enter the changes in J_DSP → re-measure → Phase IRs from the fresh
 sweeps. Projects remember which tool they belong to.
 

@@ -168,7 +168,7 @@ private fun stepStatus(state: AppState, s: Step): Pair<String?, Color> = when (s
     Step.CHECKS -> state.checks?.let { if (it.errors > 0) "${it.errors}✕" to Jdsp.MRed else if (it.warnings > 0) "${it.warnings}!" to Jdsp.MidYellow else "✓" to Jdsp.MGreen } ?: (null to Color.White)
     Step.BAND_ALIGN -> state.alignment?.let { if (it.error != null) "!" to Jdsp.MRed else if (it.hasChanges) "${it.changes.size}" to Jdsp.MGreen else "✓" to Jdsp.MGreen } ?: (null to Color.White)
     Step.DESIGN -> (if (state.optionsError != null) "!" else null) to Jdsp.MRed
-    Step.PREVIEW -> (if (state.design != null) "✓" else null) to Jdsp.MGreen
+    Step.PREVIEW -> (if (state.hasDesign) "✓" else null) to Jdsp.MGreen
     Step.EXPORT -> (if (state.exportedZip != null) "✓" else null) to Jdsp.MGreen
 }
 

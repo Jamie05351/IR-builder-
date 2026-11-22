@@ -88,6 +88,41 @@ object Exporter {
         """.trimIndent() + "\n"
     }
 
+    const val STEREO_FILE = "stereo-phase-ir.wav"
+
+    fun stereoReadme(d: StereoDesign): String {
+        val o = d.options
+        return """
+            J_DSP stereo IR (phase linearisation after the band sum)
+            ========================================================
+
+            Files: $STEREO_FILE (stereo float32, ${o.sampleRate} Hz, ${o.taps} taps), report.json.
+
+            This IR removes the phase rotation of the summed response (crossovers and speakers)
+            between ${"%.0f".format(o.stereoMinHz)} Hz and ${"%.0f".format(o.stereoMaxHz)} Hz, toward one arrival time, at both seats.
+            It doesn't change magnitude. It acts on every band alike, so it can't fix cancellation
+            between bands at a crossover (Band Align or the per-band IRs do that).
+
+            Loading in J_DSP
+            1. Convolver page: tap the Stereo slot, Load WAV..., and pick $STEREO_FILE.
+            2. Select Stereo mode. Set mode gain to 0 dB to match the prediction.
+            3. Keep the measured baseline exactly: crossovers, PEQ, delays, polarity and gains as swept.
+            4. Added latency: about ${"%.0f".format(o.jdspLatencyMs)} ms. Check video, phone and navigation audio.
+            5. Re-measure both seats with the IR active. The report's numbers are predictions.
+        """.trimIndent() + "\n"
+    }
+
+    /** Writes the stereo IR, its report and README into [directory]. Returns the WAV. */
+    fun exportStereo(d: StereoDesign, directory: File): File {
+        require(d.impulses.all { c -> c.all { it.isFinite() } }) { "Design contains non-finite coefficients; nothing exported" }
+        directory.mkdirs()
+        val wav = File(directory, STEREO_FILE)
+        wav.writeBytes(stereoFloatWav(d.options.sampleRate, d.impulses[0], d.impulses[1]))
+        File(directory, "report.json").writeText(json.encodeToString(StereoReport.serializer(), d.report))
+        File(directory, "README.txt").writeText(stereoReadme(d))
+        return wav
+    }
+
     /** Writes the loose files and the ZIP into [directory]. Returns the ZIP. */
     fun export(d: PhaseDesign, directory: File): File {
         require(d.impulses.all { b -> b.all { c -> c.all { it.isFinite() } } }) { "Design contains non-finite coefficients; nothing exported" }

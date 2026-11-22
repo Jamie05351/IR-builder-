@@ -117,15 +117,35 @@ fun DesignScreen(state: AppState) {
     val o = state.options
     fun set(n: DesignOptions) = state.updateOptions(n)
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Panel("Correction type", accent = Jdsp.HighPink) {
+        val stereo = o.irMode == jdsp.irbuilder.IrMode.STEREO
+        Panel("Convolver mode", accent = Jdsp.HighPink) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                jdsp.irbuilder.IrMode.entries.forEach { m ->
+                    Chip(m.label, o.irMode == m, {
+                        // Linearising the summed low-frequency phase needs more shift than band alignment.
+                        set(if (m == jdsp.irbuilder.IrMode.STEREO) o.copy(irMode = m, maxShiftMs = maxOf(o.maxShiftMs, 5.0)) else o.copy(irMode = m))
+                    }, Jdsp.HighPink)
+                }
+            }
             Note(
-                "Phase-only crossover alignment. Each band's IR has unity magnitude: tone stays with your PEQ. Near the Low/Mid and " +
+                if (stereo) "One stereo IR for J_DSP's Stereo slot, after the band sum. It removes the phase rotation of the summed response " +
+                    "(crossovers and speakers) toward one arrival time at both seats, phase-only. It acts on every band alike, so it can't " +
+                    "fix cancellation between bands at a crossover; use Band Align or Per-band for that. Uses the Combined sweeps " +
+                    "(all bands playing), one per channel per position."
+                else "Phase-only crossover alignment. Each band's IR has unity magnitude: tone stays with your PEQ. Near the Low/Mid and " +
                     "Mid/High crossovers, each band's phase is adjusted so the software bands add coherently at both seats. Outside the " +
                     "correction regions the IRs are a pure common delay.",
                 Color.White,
             )
         }
-        Panel("Existing J_DSP crossovers", accent = Jdsp.LowBand) {
+        if (stereo) Panel("Stereo range", accent = Jdsp.Cyan) {
+            Note("The summed phase is linearised between these frequencies; the correction fades out beyond them. Low frequencies need long shifts: keep Max shift at least 4-5 ms for a 150 Hz crossover.")
+            Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                Labeled("From (Hz)") { NumberField(o.stereoMinHz, { set(o.copy(stereoMinHz = it)) }, accent = Jdsp.Cyan) }
+                Labeled("To (Hz)") { NumberField(o.stereoMaxHz, { set(o.copy(stereoMaxHz = it)) }, accent = Jdsp.Cyan) }
+            }
+        }
+        if (!stereo) Panel("Existing J_DSP crossovers", accent = Jdsp.LowBand) {
             Note("Enter the corners J_DSP used for the sweeps. They place the correction regions and are written into the package; J_DSP asks you to acknowledge a mismatch with its own settings (±1 Hz). This program never changes the crossovers.")
             Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                 Labeled("Low/Mid (Hz)") { NumberField(o.lowMidHz, { set(o.copy(lowMidHz = it)) }, accent = Jdsp.LowBand) }
@@ -133,11 +153,11 @@ fun DesignScreen(state: AppState) {
             }
         }
         Panel("Correction limits", accent = Jdsp.Orange) {
-            SliderRow("Region width", o.regionOctaves, 0.25, 2.0, "±%.2f oct".format(o.regionOctaves), "Fully active this far either side of each crossover.") { set(o.copy(regionOctaves = it)) }
+            if (!stereo) SliderRow("Region width", o.regionOctaves, 0.25, 2.0, "±%.2f oct".format(o.regionOctaves), "Fully active this far either side of each crossover.") { set(o.copy(regionOctaves = it)) }
             SliderRow("Fade width", o.fadeOctaves, 0.1, 1.5, "%.2f oct".format(o.fadeOctaves), "Correction fades to zero over this further span.") { set(o.copy(fadeOctaves = it)) }
             SliderRow("Max shift", o.maxShiftMs, 0.1, 10.0, "%.2f ms".format(o.maxShiftMs), "Largest group-delay change any band may receive. Limits pre-ringing.") { set(o.copy(maxShiftMs = it)) }
             SliderRow("Smoothing", o.smoothingOctaves, 0.0, 1.0, if (o.smoothingOctaves == 0.0) "off" else "1/%.0f oct".format(1 / o.smoothingOctaves), "Avoids fitting narrow position-specific detail.") { set(o.copy(smoothingOctaves = it)) }
-            SliderRow("Regularisation", o.regularization, 0.0, 1.0, "%.2f".format(o.regularization), "Pull toward no change. Higher is more conservative.") { set(o.copy(regularization = it)) }
+            if (!stereo) SliderRow("Regularisation", o.regularization, 0.0, 1.0, "%.2f".format(o.regularization), "Pull toward no change. Higher is more conservative.") { set(o.copy(regularization = it)) }
         }
         Panel("Seat weighting", accent = Jdsp.Purple) {
             val share = o.driverWeight / (o.driverWeight + o.passengerWeight)

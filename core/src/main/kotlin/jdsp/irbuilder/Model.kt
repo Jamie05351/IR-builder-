@@ -81,6 +81,11 @@ data class DesignOptions(
      * the checks, Band Align, the phase solver and the plots alike.
      */
     val measurementSmoothing: Int = 24,
+    /** Per-band Low/Mid/High IRs, or one stereo IR after the band sum. */
+    val irMode: IrMode = IrMode.PER_BAND,
+    /** Stereo mode: the summed phase is linearised between these frequencies (with fades outside). */
+    val stereoMinHz: Double = 40.0,
+    val stereoMaxHz: Double = 10000.0,
     /** Pull toward "no change". Larger is more conservative. */
     val regularization: Double = 0.05,
     val driverWeight: Double = 1.0,
@@ -94,10 +99,14 @@ data class DesignOptions(
     fun seatWeight(seat: Seat) = if (seat == Seat.DRIVER) driverWeight else passengerWeight
 
     /** Lowest frequency measurements must cover. */
-    val analysisMinHz: Double get() = maxOf(10.0, lowMidHz / pow2(regionOctaves + fadeOctaves + 0.25))
+    val analysisMinHz: Double get() = maxOf(10.0,
+        if (irMode == IrMode.STEREO) minOf(lowMidHz / pow2(regionOctaves + fadeOctaves + 0.25), stereoMinHz / pow2(fadeOctaves + 0.25))
+        else lowMidHz / pow2(regionOctaves + fadeOctaves + 0.25))
 
     /** Highest frequency measurements must cover. */
-    val analysisMaxHz: Double get() = minOf(sampleRate * 0.45, midHighHz * pow2(regionOctaves + fadeOctaves + 0.25))
+    val analysisMaxHz: Double get() = minOf(sampleRate * 0.45,
+        if (irMode == IrMode.STEREO) maxOf(midHighHz * pow2(regionOctaves + fadeOctaves + 0.25), stereoMaxHz * pow2(fadeOctaves + 0.25))
+        else midHighHz * pow2(regionOctaves + fadeOctaves + 0.25))
 
     /**
      * What reading and checking measurements needs (both tools): sample rate, crossovers, the
@@ -117,6 +126,12 @@ data class DesignOptions(
     /** Everything the Phase IR design needs: [validateMeasurement] plus the filter settings. */
     fun validate() {
         validateMeasurement()
+        if (irMode == IrMode.STEREO) {
+            require(stereoMinHz.isFinite() && stereoMaxHz.isFinite()) { "Stereo range must be finite" }
+            require(stereoMinHz / pow2(fadeOctaves) >= 10.0) { "Stereo range must start at least the fade width above 10 Hz" }
+            require(stereoMaxHz * pow2(fadeOctaves) <= sampleRate * 0.45) { "Stereo range plus its fade must end below %.0f Hz".format(sampleRate * 0.45) }
+            require(stereoMaxHz >= stereoMinHz * 4) { "Stereo range must span at least two octaves" }
+        }
         val numbers = listOf(maxShiftMs, smoothingOctaves, regularization, driverWeight, passengerWeight)
         require(numbers.all { it.isFinite() }) { "All settings must be finite numbers" }
         require(taps in 1024..65536 && taps and (taps - 1) == 0) { "Taps must be a power of two from 1024 to 65536" }
@@ -155,12 +170,25 @@ internal fun pow2(x: Double) = Math.pow(2.0, x)
 fun requiredCoverageHz(band: Band, o: DesignOptions, inUse: Set<Crossover> = Crossover.entries.toSet()): ClosedFloatingPointRange<Double> {
     val lowMid = Crossover.LOW_MID in inUse
     val midHigh = Crossover.MID_HIGH in inUse
+    if (band == Band.COMBINED && o.irMode == IrMode.STEREO) {
+        // The stereo IR is fitted over its whole range, fades included.
+        return maxOf(o.stereoMinHz / pow2(o.fadeOctaves), o.analysisMinHz)..minOf(o.stereoMaxHz * pow2(o.fadeOctaves), o.analysisMaxHz)
+    }
     val r = when (band) {
         Band.LOW -> o.lowMidHz / 4..o.lowMidHz * 2
         Band.MID, Band.COMBINED -> (if (lowMid || !midHigh) o.lowMidHz / 2 else o.midHighHz / 2)..(if (midHigh || !lowMid) o.midHighHz * 2 else o.lowMidHz * 2)
         Band.HIGH -> o.midHighHz / 2..o.midHighHz * 4
     }
     return maxOf(r.start, o.analysisMinHz)..minOf(r.endInclusive, o.analysisMaxHz)
+}
+
+/** Which convolver architecture the Phase IRs are made for. */
+@Serializable
+enum class IrMode(val label: String) {
+    /** Low/Mid/High IRs before the band sum: aligns the bands to each other at the crossovers. */
+    PER_BAND("Per-band (Low/Mid/High)"),
+    /** One stereo IR after the band sum: linearises the summed phase; can't change band-to-band phase. */
+    STEREO("Stereo (after the band sum)"),
 }
 
 /** Measurement smoothing choices, 1/N octave; 0 is none. */

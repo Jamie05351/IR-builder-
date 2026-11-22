@@ -62,6 +62,9 @@ data class CheckScope(
          */
         val PHASE_IRS = phaseIrs(null)
 
+        /** Stereo IR: one Combined sweep per channel/position is all it uses. */
+        val STEREO = CheckScope(listOf("Stereo IR" to setOf(Band.COMBINED)), strict = false, purpose = "the Stereo IR")
+
         fun phaseIrs(measurements: List<Measurement>?): CheckScope {
             val (used, skipped) = Crossover.entries.partition { xo ->
                 val outer = if (xo == Crossover.LOW_MID) Band.LOW else Band.HIGH
@@ -234,7 +237,7 @@ object Checks {
         // Positions far from their seat's typical level suggest a gain change or a moved mic.
         for (seat in Seat.entries) for (ch in Channel.entries) {
             val gs = set.groups.filter { it.key.seat == seat && it.key.channel == ch && it.has(needed) }
-            if (gs.size < 3) continue
+            if (gs.size < 3 || needed.isEmpty()) continue
             val curves = gs.map { g -> g.branchSum().let { s -> DoubleArray(freqs.size) { db(s.abs(it)) } } }
             val median = DoubleArray(freqs.size) { i -> curves.map { it[i] }.sorted()[curves.size / 2] }
             for ((g, c) in gs.zip(curves)) {

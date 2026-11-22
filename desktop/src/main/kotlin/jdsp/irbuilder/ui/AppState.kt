@@ -74,6 +74,9 @@ class AppState(private var scope: CoroutineScope) {
     var checks by mutableStateOf<CheckResult?>(null)
     var set by mutableStateOf<MeasurementSet?>(null)
     var design by mutableStateOf<PhaseDesign?>(null)
+    /** The Phase IRs tool's result in Stereo mode (one IR after the band sum). */
+    var stereoDesign by mutableStateOf<jdsp.irbuilder.StereoDesign?>(null)
+    val hasDesign get() = design != null || stereoDesign != null
     var align by mutableStateOf(AlignOptions())
         private set
     var alignError by mutableStateOf<String?>(null)
@@ -91,6 +94,7 @@ class AppState(private var scope: CoroutineScope) {
         set = null
         alignment = null
         design = null
+        stereoDesign = null
         exportedZip = null
     }
 
@@ -197,7 +201,12 @@ class AppState(private var scope: CoroutineScope) {
         measurements.toList() != snapshot || options != o || align != a
 
     /** The loaded set and its checks, reusing what's current. */
-    private fun loadAndCheck(snapshot: List<Measurement>, o: DesignOptions, scope: CheckScope = checkScope()): Pair<MeasurementSet, CheckResult> {
+    /** Stereo mode reads only the Combined sweeps; band-solo files aren't used by it. */
+    private fun inputs(snapshot: List<Measurement>, o: DesignOptions) =
+        if (tool == Tool.PHASE_IRS && o.irMode == jdsp.irbuilder.IrMode.STEREO) snapshot.filter { it.band == Band.COMBINED } else snapshot
+
+    private fun loadAndCheck(all: List<Measurement>, o: DesignOptions, scope: CheckScope = checkScope()): Pair<MeasurementSet, CheckResult> {
+        val snapshot = inputs(all, o)
         val xo = scope.crossovers.toSet()
         val s = set?.takeIf { it.options == o && it.measurements == snapshot && it.crossovers == xo } ?: MeasurementSet.load(snapshot, o, xo)
         // The checks are cheap next to reading files; always run them for the current tool's scope.
@@ -205,7 +214,11 @@ class AppState(private var scope: CoroutineScope) {
     }
 
     /** What the current tool requires of the measurements. */
-    fun checkScope(): CheckScope = if (tool == Tool.BAND_ALIGN) CheckScope.bandAlign(align, measurements.toList()) else CheckScope.phaseIrs(measurements.toList())
+    fun checkScope(): CheckScope = when {
+        tool == Tool.BAND_ALIGN -> CheckScope.bandAlign(align, measurements.toList())
+        options.irMode == jdsp.irbuilder.IrMode.STEREO -> CheckScope.STEREO
+        else -> CheckScope.phaseIrs(measurements.toList())
+    }
 
     /**
      * Installs a freshly loaded set. Results computed from a different load (e.g. files re-exported
@@ -215,6 +228,7 @@ class AppState(private var scope: CoroutineScope) {
         if (s !== set) {
             alignment = null
             design = null
+            stereoDesign = null
             exportedZip = null
         }
         set = s
@@ -248,7 +262,7 @@ class AppState(private var scope: CoroutineScope) {
         val scope = checkScope()
         val o = options
         val (s, c) = withContext(Dispatchers.Default) {
-            val s = MeasurementSet.load(snapshot, o, scope.crossovers.toSet())
+            val s = MeasurementSet.load(inputs(snapshot, o), o, scope.crossovers.toSet())
             s to Checks.run(s, scope)
         }
         if (inputsChangedSince(snapshot, o)) {
@@ -263,18 +277,20 @@ class AppState(private var scope: CoroutineScope) {
     fun calculate() = background("Calculating phase-alignment filters…") {
         val snapshot = measurements.toList()
         val o = options
+        val stereo = o.irMode == jdsp.irbuilder.IrMode.STEREO
         val (s, c, d) = withContext(Dispatchers.Default) {
-            val (s, c) = loadAndCheck(snapshot, o, CheckScope.phaseIrs(snapshot))
+            val (s, c) = loadAndCheck(snapshot, o, if (stereo) CheckScope.STEREO else CheckScope.phaseIrs(snapshot))
             // The phase IRs are designed on the measurements as taken: Band Align is a separate
             // tool, applied in J_DSP and re-measured before designing IRs.
-            Triple(s, c, if (c.canDesign) Designer.design(s) else null)
+            Triple(s, c, if (!c.canDesign) null else if (stereo) jdsp.irbuilder.StereoDesigner.design(s) else Designer.design(s))
         }
         if (inputsChangedSince(snapshot, o)) {
             status = "Inputs changed while calculating; result discarded. Calculate again."
             return@background
         }
         publish(s, c)
-        design = d
+        design = d as? PhaseDesign
+        stereoDesign = d as? jdsp.irbuilder.StereoDesign
         exportedZip = null
         if (d == null) {
             status = "Design blocked: ${c.errors} error(s) on the Checks page."
@@ -286,8 +302,15 @@ class AppState(private var scope: CoroutineScope) {
     }
 
     fun export(dir: File) = background("Writing package…") {
-        val d = design ?: throw IllegalStateException("Calculate a design first")
-        val zip = withContext(Dispatchers.IO) { Exporter.export(d, dir) }
+        val d = design
+        val sd = stereoDesign
+        val zip = withContext(Dispatchers.IO) {
+            when {
+                sd != null -> Exporter.exportStereo(sd, dir)
+                d != null -> Exporter.export(d, dir)
+                else -> throw IllegalStateException("Calculate a design first")
+            }
+        }
         exportDir = dir
         exportedZip = zip
         status = "Exported ${zip.path}"
