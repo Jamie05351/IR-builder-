@@ -123,13 +123,19 @@ object EqWizard {
             else Channel.entries.filter { c -> Seat.entries.any { (c to it) in perSeat } }.map { (if (it == Channel.L) EqSide.LEFT else EqSide.RIGHT) to listOf(it) }
         for (seat in Seat.entries) if (perSeat.keys.none { it.second == seat }) warnings += "No ${seat.label.lowercase()} seat measurements: the EQ is fitted to the other seat only"
 
-        val inFit = BooleanArray(n) { f[it] in o.minHz..o.maxHz }
         val results = sides.map { (side, chs) ->
             val power = seatAverage(chs.flatMap { c -> Seat.entries.map { c to it } })
+            // Only what was swept: a band-limited sweep reads as silence outside its range.
+            val covered = BooleanArray(n) { power[it] > 0 }
+            val inFit = BooleanArray(n) { f[it] in o.minHz..o.maxHz && covered[it] }
+            require(inFit.any { it }) { "No measured data in the fit range ${o.minHz.toInt()}–${o.maxHz.toInt()} Hz" }
             val measured = toDb(powerSmooth(power, f, 1.0 / 6))
             val wide = toDb(powerSmooth(power, f, 1.0))
-            val ref = f.indices.filter { f[it] in 300.0..3000.0 }.map { measured[it] }.average()
-            val target = DoubleArray(n) { ref + houseCurve(f[it], o) }
+            // Level the house curve to the response over 300 Hz–3 kHz where that was measured and
+            // is in the fit range, else over the measured fit range itself.
+            val refIdx = f.indices.filter { inFit[it] && f[it] in 300.0..3000.0 }.ifEmpty { f.indices.filter { inFit[it] } }
+            val offset = refIdx.map { measured[it] - houseCurve(f[it], o) }.average()
+            val target = DoubleArray(n) { offset + houseCurve(f[it], o) }
             val wanted = DoubleArray(n) { i ->
                 if (!inFit[i]) 0.0 else {
                     val d = target[i] - measured[i]

@@ -59,7 +59,7 @@ object Importer {
         required: ClosedFloatingPointRange<Double>? = null,
         /** Impulses only: frequency-dependent window length in cycles (0 = the whole impulse). */
         windowCycles: Int = 0,
-    ): LoadedResponse = silenceOutsideSweep(readSmoothed(m, freqs, sampleRate, smoothing, required, windowCycles), freqs)
+    ): LoadedResponse = silenceOutsideSweep(readSmoothed(m, freqs, sampleRate, smoothing, required, windowCycles, freqs), freqs)
 
     /** A band-limited sweep says nothing beyond its ends: the band is taken as silent there. */
     private fun silenceOutsideSweep(r: LoadedResponse, freqs: DoubleArray): LoadedResponse {
@@ -72,8 +72,11 @@ object Importer {
         return LoadedResponse(h, r.kind, r.impulsePeakIndex, r.coverageHz, r.smoothing, r.restoredDelayMs)
     }
 
-    private fun readSmoothed(m: Measurement, freqs: DoubleArray, sampleRate: Int, smoothing: Int, required: ClosedFloatingPointRange<Double>?, windowCycles: Int): LoadedResponse {
-        val r = readRaw(m, freqs, sampleRate, required ?: freqs.first()..freqs.last(), windowCycles)
+    private fun readSmoothed(m: Measurement, freqs: DoubleArray, sampleRate: Int, smoothing: Int, required: ClosedFloatingPointRange<Double>?, windowCycles: Int, grid: DoubleArray): LoadedResponse {
+        // Silence outside the sweep first: the reader holds a band-limited sweep's end values
+        // across the rest of the grid, and that flat-phase filler would otherwise outvote the real
+        // data in the arrival estimate the smoothing depends on.
+        val r = silenceOutsideSweep(readRaw(m, freqs, sampleRate, required ?: freqs.first()..freqs.last(), windowCycles), grid)
         if (smoothing <= 0) return r
         // Start from the delay the file itself states: REW's header note (restored = exported
         // delayed by it) or an impulse's peak. Only the small remainder is estimated.

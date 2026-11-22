@@ -80,4 +80,47 @@ class FdwTest {
         assertEquals(-192, r.impulsePeakIndex)
         for (i in freqs.indices) assertEquals(0.0, wrap(r.response.arg(i) - 2 * PI * freqs[i] * 0.004), 1e-6)
     }
+
+    @Test
+    fun offKeepsTheWholeImpulse() {
+        // With the window off a late reflection stays in, exactly as the plain transform has it.
+        val x = DoubleArray(4800).also { it[480] = 1.0; it[480 + 144] = 0.5 }
+        val h = Fdw.spectrum(x, 48000, 0.0, Fdw.onset(x, 48000), 0.0, freqs)
+        for (i in freqs.indices) {
+            val w = 2 * PI * freqs[i]
+            val re = kotlin.math.cos(-w * 0.01) + 0.5 * kotlin.math.cos(-w * 0.013)
+            val im = kotlin.math.sin(-w * 0.01) + 0.5 * kotlin.math.sin(-w * 0.013)
+            assertEquals(re, h.re[i], 1e-3, "${freqs[i]} Hz")
+            assertEquals(im, h.im[i], 1e-3, "${freqs[i]} Hz")
+        }
+        // And from REW impulse text too.
+        val dir = createTempDirectory("fdw").toFile()
+        val file = File(dir, "off.txt").apply { writeText(rewImpulse(x, 0.0)) }
+        val r = Importer.read(m(file.path), freqs, 48000, windowCycles = 0)
+        for (i in freqs.indices) assertEquals(h.abs(i), r.response.abs(i), 1e-3)
+    }
+
+    @Test
+    fun aVeryShortImpulseStillLoads() {
+        // 16 samples with the peak first: less than the 0.8 ms floor after the onset.
+        val dir = createTempDirectory("fdw").toFile()
+        val x = FloatArray(16).also { it[0] = 1f }
+        val file = File(dir, "short.wav")
+        ImportTest.writeMonoFloatWav(file, 48000, x)
+        val r = Importer.read(m(file.path), freqs, 48000, windowCycles = 8)
+        for (i in freqs.indices) assertEquals(1.0, r.response.abs(i), 1e-6)
+    }
+
+    @Test
+    fun aBandLimitedSweepSmoothsCleanly() {
+        // A flat REW sweep from 2.8 kHz up, 3 ms late, read onto a grid from 40 Hz with 1/24-octave
+        // smoothing: the filler below the sweep must not steer the arrival the smoothing relies on.
+        val dir = createTempDirectory("fdw").toFile()
+        val file = File(dir, "hi.txt")
+        Fixtures.writeRew(file, { hz -> Fixtures.C(kotlin.math.cos(-2 * PI * hz * 0.003), kotlin.math.sin(-2 * PI * hz * 0.003)) }, minHz = 2800.0)
+        val r = Importer.read(m(file.path), freqs, 48000, smoothing = 24, required = 3000.0..15000.0)
+        for (i in freqs.indices) if (freqs[i] in 3200.0..15000.0) assertEquals(0.0, 20 * log10(r.response.abs(i)), 0.3, "${freqs[i]} Hz")
+        for (i in freqs.indices) if (freqs[i] < 2700.0) assertEquals(0.0, r.response.abs(i), 0.0)
+    }
 }
+

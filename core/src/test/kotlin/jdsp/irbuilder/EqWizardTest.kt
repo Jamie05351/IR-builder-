@@ -81,4 +81,22 @@ class EqWizardTest {
         assertEquals(-6.0, EqWizard.peakDb(EqBand(1000.0, -6.0, 2.0), 1000.0, fs), 1e-9)
         assertEquals(0.0, EqWizard.peakDb(EqBand(1000.0, -6.0, 2.0), 20.0, fs), 0.01)
     }
+
+    @Test
+    fun aTrebleOnlyFitWithTrebleOnlySweepsLevelsToWhatWasMeasured() {
+        // Flat Combined sweeps from 2.8 kHz up, fitted 4–16 kHz with no house curve: nothing to do.
+        val dir = createTempDirectory("eq").toFile()
+        val ms = ArrayList<Measurement>()
+        for (seat in Seat.entries) for (ch in Channel.entries) {
+            val file = File(dir, "${seat.name}_${ch.name}_combined.txt")
+            Fixtures.writeRew(file, { hz -> Fixtures.C(kotlin.math.cos(-2 * Math.PI * hz * 0.003), kotlin.math.sin(-2 * Math.PI * hz * 0.003)) }, minHz = 2800.0)
+            ms += Measurement(file.path, seat, "c", ch, Band.COMBINED, "ref-${ch.name}")
+        }
+        val r = solve(ms, EqOptions(minHz = 4000.0, maxHz = 16000.0, bassLiftDb = 0.0, trebleTiltDb = 0.0))
+        for (s in r.sides) {
+            assertTrue(s.bands.isEmpty(), "${s.side}: ${s.bands}")
+            assertTrue(s.rmsBeforeDb < 0.5, "${s.side}: ${s.rmsBeforeDb}")
+        }
+    }
 }
+

@@ -47,11 +47,13 @@ object Fdw {
      */
     fun spectrum(x: DoubleArray, sampleRate: Int, timeZero: Double, onset: Int, cycles: Double, freqs: DoubleArray): CVec {
         val fs = sampleRate.toDouble()
+        // Off: the whole impulse as it is, no lead-in cut and no taper.
+        if (cycles <= 0) return windowed(x, fs, timeZero, 0, 0, onset, x.size - onset, freqs, taper = false)
         val pre = min((PRE_S * fs).toInt(), onset)
         val start = onset - pre
         val available = (x.size - onset) / fs
-        fun windowSeconds(f: Double) =
-            if (cycles <= 0) available else (cycles / f).coerceIn(FLOOR_S, min(MAX_GATE_S, available))
+        // A very short impulse may not even hold the floor: then the window is all there is.
+        fun windowSeconds(f: Double) = (cycles / f).coerceIn(min(FLOOR_S, available), min(MAX_GATE_S, available))
 
         // Bank centres from the bottom to the top of the grid, three per octave; neighbours whose
         // windows come out the same length share one evaluation.
@@ -84,13 +86,14 @@ object Fdw {
     }
 
     /** One window's spectrum on [freqs]: lead-in, flat to half its length, half-Hann down to its end. */
-    private fun windowed(x: DoubleArray, fs: Double, timeZero: Double, start: Int, pre: Int, onset: Int, length: Int, freqs: DoubleArray): CVec {
-        val end = min(x.size, onset + length)
+    private fun windowed(x: DoubleArray, fs: Double, timeZero: Double, start: Int, pre: Int, onset: Int, length: Int, freqs: DoubleArray, taper: Boolean = true): CVec {
+        val end = min(x.size, onset + length).coerceAtLeast(start + 1)
         val seg = DoubleArray(end - start)
         val flat = length / 2
         for (n in seg.indices) {
             val i = start + n
             val w = when {
+                !taper -> 1.0
                 i < onset -> if (pre > 0) 0.5 * (1 - cos(PI * (n + 0.5) / pre)) else 1.0
                 i - onset < flat -> 1.0
                 else -> {
