@@ -62,6 +62,9 @@ data class CheckScope(
          */
         val PHASE_IRS = phaseIrs(null)
 
+        /** Stereo IR: one Combined sweep per channel/position is all it uses. */
+        val STEREO = CheckScope(listOf("Stereo IR" to setOf(Band.COMBINED)), strict = false, purpose = "the Stereo IR")
+
         fun phaseIrs(measurements: List<Measurement>?): CheckScope {
             val (used, skipped) = Crossover.entries.partition { xo ->
                 val outer = if (xo == Crossover.LOW_MID) Band.LOW else Band.HIGH
@@ -79,6 +82,21 @@ data class CheckScope(
          * pair. Given the [measurements], an enabled pair whose moving band has no files at all is
          * left out (and reported), so it doesn't impose its crossover's coverage on Mid.
          */
+        /** One unit per crossover the Crossover Finder searches, like Band Align's pairs. */
+        fun crossoverFinder(f: FinderOptions, measurements: List<Measurement>? = null): CheckScope {
+            val (used, skipped) = f.crossovers.partition { xo ->
+                val outer = if (xo == Crossover.LOW_MID) Band.LOW else Band.HIGH
+                measurements == null || measurements.any { it.band == outer }
+            }
+            return CheckScope(
+                used.map { "${it.label} search" to setOf(it.lower, it.upper) },
+                strict = false, purpose = FINDER_PURPOSE,
+                skipped = skipped.map { "${it.label}: no ${(if (it == Crossover.LOW_MID) Band.LOW else Band.HIGH).label} sweeps" },
+            )
+        }
+
+        const val FINDER_PURPOSE = "the Crossover Finder"
+
         fun bandAlign(a: AlignOptions, measurements: List<Measurement>? = null): CheckScope {
             val enabled = AlignPair.entries.filter { if (it == AlignPair.LOW_MID) a.lowMid else a.midHigh }
             val (used, skipped) = enabled.partition { p -> measurements == null || measurements.any { it.band == p.moving } }
@@ -112,15 +130,17 @@ object Checks {
             err("No measurements", "Import software-band-solo sweeps for ${scope.purpose}.")
             return CheckResult(items, emptyList())
         }
-        val aligning = scope.purpose == "Band Align"
+        val finding = scope.purpose == CheckScope.FINDER_PURPOSE
+        val aligning = scope.purpose == "Band Align" || finding
         for (s in scope.skipped) {
-            if (aligning) warn("$s, so it isn't aligned", "Switch that pair off on the Band Align page, or import its sweeps.")
+            if (finding) warn("$s, so it isn't searched", "Switch that crossover off on the Crossover Finder page, or import its sweeps.")
+            else if (aligning) warn("$s, so it isn't aligned", "Switch that pair off on the Band Align page, or import its sweeps.")
             else warn("$s, so it isn't corrected", "Its IRs pass that crossover unchanged (pure delay). Import its sweeps to correct it.")
         }
         if (scope.requiredBands.isEmpty()) {
-            err(if (aligning) "Nothing to align" else "Nothing to correct", when {
+            err(if (finding) "Nothing to search" else if (aligning) "Nothing to align" else "Nothing to correct", when {
                 !aligning -> "Import Low+Mid or Mid+High band-solo sweeps."
-                scope.skipped.isEmpty() -> "Switch on Low against Mid, High against Mid, or both."
+                scope.skipped.isEmpty() -> if (finding) "Switch on Low/Mid, Mid/High or both." else "Switch on Low against Mid, High against Mid, or both."
                 else -> "None of the switched-on pairs has sweeps for its bands."
             })
             return CheckResult(items.sortedBy { it.severity.ordinal }, emptyList())
@@ -159,14 +179,14 @@ object Checks {
                 }
             }
         } else if (scope.units.none { (_, bands) -> set.groups.any { usable(it, bands) } }) {
-            err(if (scope.purpose == "Band Align") "Nothing to align" else "Nothing to correct", "No position has the sweeps for " + scope.units.joinToString(" or ") { (u, b) -> "$u (" + Band.BRANCHES.filter { it in b }.joinToString("/") { it.label } + ")" } + " that aren't validation-only.")
+            err(if (finding) "Nothing to search" else if (scope.purpose == "Band Align") "Nothing to align" else "Nothing to correct", "No position has the sweeps for " + scope.units.joinToString(" or ") { (u, b) -> "$u (" + Band.BRANCHES.filter { it in b }.joinToString("/") { it.label } + ")" } + " that aren't validation-only.")
         } else {
             // Judged per pair, the same way Band Align picks positions for each pair.
             for ((unit, bands) in scope.units) for (ch in Channel.entries) {
                 val bandList = Band.BRANCHES.filter { it in bands }.joinToString("/") { it.label }
                 val seats = Seat.entries.filter { st -> set.groups.any { it.key.seat == st && it.key.channel == ch && usable(it, bands) } }
                 when {
-                    seats.isEmpty() -> warn("${ch.label} side: no $unit", "No $bandList sweeps for the ${ch.label.lowercase()} side." + if (scope.purpose == "Band Align") "" else " Its IRs pass that crossover unchanged.")
+                    seats.isEmpty() -> warn("${ch.label} side: no $unit", "No $bandList sweeps for the ${ch.label.lowercase()} side." + if (aligning) "" else " Its IRs pass that crossover unchanged.")
                     seats.size == 1 -> warn("${ch.label} side $unit: ${seats.single().label} seat only", "The other seat has no $bandList sweeps, so it isn't checked for getting worse.")
                 }
             }
@@ -234,7 +254,7 @@ object Checks {
         // Positions far from their seat's typical level suggest a gain change or a moved mic.
         for (seat in Seat.entries) for (ch in Channel.entries) {
             val gs = set.groups.filter { it.key.seat == seat && it.key.channel == ch && it.has(needed) }
-            if (gs.size < 3) continue
+            if (gs.size < 3 || needed.isEmpty()) continue
             val curves = gs.map { g -> g.branchSum().let { s -> DoubleArray(freqs.size) { db(s.abs(it)) } } }
             val median = DoubleArray(freqs.size) { i -> curves.map { it[i] }.sorted()[curves.size / 2] }
             for ((g, c) in gs.zip(curves)) {

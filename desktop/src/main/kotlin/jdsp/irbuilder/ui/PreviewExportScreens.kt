@@ -35,6 +35,7 @@ private sealed interface View {
 
 @Composable
 fun PreviewScreen(state: AppState) {
+    state.stereoDesign?.let { StereoPreview(it); return }
     val d = state.design
     if (d == null) {
         Panel("Preview", accent = Jdsp.LightBlue) { Note("Calculate a design on the Design page first.") }
@@ -161,6 +162,7 @@ private fun ResultRow(label: String, regions: List<RegionMetrics>, bad: Boolean,
 
 @Composable
 fun ExportScreen(state: AppState) {
+    state.stereoDesign?.let { StereoExport(state, it); return }
     val d = state.design
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Panel("Export for J_DSP", accent = Jdsp.MGreen) {

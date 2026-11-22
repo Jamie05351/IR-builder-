@@ -147,7 +147,9 @@ private fun CompletenessPanel(state: AppState) {
     if (grid.isEmpty()) return
     Panel("Completeness", accent = Jdsp.MGreen) {
         Note(
-            if (state.tool == jdsp.irbuilder.Tool.BAND_ALIGN) "Band Align needs the bands of the pairs switched on (Low + Mid, Mid + High). Missing seats or sides are skipped with a warning. Band-limited sweeps are fine if each band covers an octave either side of its crossovers."
+            if (state.tool == jdsp.irbuilder.Tool.PHASE_IRS && state.options.irMode == jdsp.irbuilder.IrMode.STEREO) "Stereo IR mode uses one Combined sweep (all bands playing, full range) per channel per position. Band-solo sweeps aren't used in this mode."
+            else if (state.tool == jdsp.irbuilder.Tool.CROSSOVER_FINDER) "The Crossover Finder needs the bands of each crossover it searches (Low + Mid, Mid + High), swept through J_DSP's current crossovers. Missing seats or sides are skipped with a warning. Band-limited sweeps are fine: candidates that would need data beyond a sweep are left out."
+            else if (state.tool == jdsp.irbuilder.Tool.BAND_ALIGN) "Band Align needs the bands of the pairs switched on (Low + Mid, Mid + High). Missing seats or sides are skipped with a warning. Band-limited sweeps are fine if each band covers an octave either side of its crossovers."
             else "Phase IRs correct each crossover where both of its bands were measured (Low+Mid for Low/Mid, Mid+High for Mid/High), per channel. Anything without data is left as a pure delay. Combined is optional (validates the band sum). Each band needs to cover an octave either side of the crossovers it's used for.",
         )
         val rows = grid.keys.map { it.seat to it.position }.distinct().sortedWith(compareBy({ it.first }, { it.second }))

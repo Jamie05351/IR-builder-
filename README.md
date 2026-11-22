@@ -16,10 +16,10 @@ program models what is really there: for each seat, mic position and channel, th
 of each software branch through the complete system, summed as complex responses. It never adds a
 crossover and never assumes six independent outputs.
 
-## Two tools
+## Three tools
 
-The app opens on a start screen with two independent tools. Both begin with importing and checking
-measurements; neither runs the other.
+The app opens on a start screen with three independent tools. All begin with importing and checking
+measurements; none runs another.
 
 - **Band Align** (Measurements → Checks → Band Align): J_DSP's Band Align, extended. Per side, the
   Low delay/polarity against Mid and the High delay/polarity against Mid that make the bands add up
@@ -30,8 +30,33 @@ measurements; neither runs the other.
   per channel where both of its bands were measured; a channel, crossover or band without data is
   left as a pure delay, so one channel or Low+Mid only works. All three WAVs are always exported.
 
-Recommended order: Band Align → enter the changes in J_DSP → re-measure → Phase IRs from the fresh
-sweeps. Projects remember which tool they belong to.
+- **Crossover Finder** (Measurements → Checks → Crossover Finder): which J_DSP crossover to use.
+  For each crossover it searches the frequency and slope (BW1/BW2/BW3/LR4/BW4) of both sides, with
+  each side's delay and polarity, for the bands to add up best at both seats. It reuses the normal
+  band-solo sweeps: J_DSP's current filter is divided out exactly (the same filter maths as J_DSP's
+  engine, no auto-pairing) and each candidate put in its place. A candidate may not lift a band
+  where its sweep is more than 45 dB down or wasn't swept, beyond what stays 30 dB down, so it never
+  leans on data the sweeps can't vouch for. Candidates are scored against a flat-sum target (the
+  bands summed perfectly in phase) over the crossover region, dips counted double, per seat; none
+  may make a seat worse, and the winner must gain at least 0.5 dB. Frequencies move in 1/12-octave
+  steps up to an octave, inside per-filter limits and allowed slopes you set (the tool can't know
+  what a speaker can safely take; by default half an octave, and a highpass no shallower than now).
+  Result: crossover, delay and polarity settings to enter in J_DSP, with seat plots and the
+  next-best options.
+
+The Phase IRs tool has two convolver modes, chosen on its Design page, matching J_DSP's convolver:
+
+- **Per-band (Low/Mid/High)**: three stereo IRs before the band sum that align the bands to each
+  other at the crossovers (exported as `band-ir-package.zip`).
+- **Stereo (after the band sum)**: one stereo IR (`stereo-phase-ir.wav`) for the Stereo slot. From
+  one Combined sweep per channel per position, it removes the phase rotation of the summed response
+  (crossovers and speakers) toward one arrival time at both seats, phase-only, between a chosen
+  range (40 Hz–10 kHz by default). It acts on every band alike, so it can't fix cancellation between
+  bands; Band Align or Per-band do that. Low-frequency linearisation needs a few ms of shift, so the
+  maximum shift is raised to 5 ms when Stereo is chosen.
+
+Recommended order: Crossover Finder (or Band Align if the crossovers stay) → enter the changes in
+J_DSP → re-measure → Phase IRs from the fresh sweeps. Projects remember which tool they belong to.
 
 ## Phase IRs workflow
 

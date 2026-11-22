@@ -92,6 +92,20 @@ class ScreensRenderTest {
         }
         state.tool = null
         render("0-start")
+        // Stereo IR mode of the Phase IRs tool: Design, Preview and Export.
+        state.tool = jdsp.irbuilder.Tool.PHASE_IRS
+        state.updateOptions(state.options.copy(irMode = jdsp.irbuilder.IrMode.STEREO, maxShiftMs = 5.0))
+        val stereoSet = MeasurementSet.load(state.measurements.filter { it.band == Band.COMBINED }, state.options, emptySet())
+        state.set = stereoSet
+        state.stereoDesign = jdsp.irbuilder.StereoDesigner.design(stereoSet)
+        for (step in listOf(Step.DESIGN, Step.PREVIEW, Step.EXPORT)) { state.step = step; render("stereo-${step.name.lowercase()}") }
+        state.updateOptions(state.options.copy(irMode = jdsp.irbuilder.IrMode.PER_BAND))
+        state.set = set
+        state.checks = Checks.run(set)
+        state.alignment = jdsp.irbuilder.BandAlign.solve(set, state.align)
+        state.design = Designer.design(set)
+        state.updateFinder(state.finder.copy(timing = state.align.timing))
+        state.finding = jdsp.irbuilder.CrossoverFinder.solve(set, state.finder)
         for (tool in jdsp.irbuilder.Tool.entries) {
             state.tool = tool
             stepsFor(tool).forEachIndexed { i, step ->
