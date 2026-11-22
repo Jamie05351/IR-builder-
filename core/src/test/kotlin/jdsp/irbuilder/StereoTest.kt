@@ -86,4 +86,30 @@ class StereoTest {
         val set = MeasurementSet.load(listOf(Measurement(short.path, Seat.DRIVER, "c", Channel.L, Band.COMBINED, "r")), o, emptySet())
         assertTrue(set.loadErrors.single().message.contains("Combined"), set.loadErrors.single().message)
     }
+
+    @Test
+    fun aLongRecordedArrivalDelayIsNotMistakenForPhaseRotation() {
+        // Flat Combined sweeps 100 ms late, which REW took out of the phase and noted in the
+        // header. Estimated from the log grid alone, such a delay aliases; the file's own note
+        // must be used, so nothing needs correcting.
+        val dir = createTempDirectory("irb").toFile()
+        val ms = ArrayList<Measurement>()
+        for (seat in Seat.entries) for (pos in listOf("c", "p2")) for (ch in Channel.entries) {
+            val file = File(dir, "${seat.name}_${pos}_${ch.name}_combined.txt")
+            val late = 0.1 + if (seat == Seat.PASSENGER) 0.0004 else 0.0
+            Fixtures.writeRew(file, { f -> Fixtures.C(kotlin.math.cos(-2 * Math.PI * f * late), kotlin.math.sin(-2 * Math.PI * f * late)) }, removedDelayMs = 100.0)
+            ms += Measurement(file.path, seat, pos, ch, Band.COMBINED, "ref-${ch.name}")
+        }
+        val d = StereoDesigner.design(MeasurementSet.load(ms, o, emptySet()))
+        for (c in d.report.channels) assertTrue(c.maxPhaseDeg < 5.0, "${c.channel}: ${c.maxPhaseDeg}°")
+        for (p in d.report.positions) assertTrue(p.beforeRmsDeg < 5.0, "${p.seat} ${p.position}: ${p.beforeRmsDeg}°")
+    }
+
+    @Test
+    fun hiddenPerBandRegionSettingsDontBlockStereo() {
+        // Valid per-band settings, then Stereo with a 1-octave fade: the per-band Mid/High region
+        // would reach 28 kHz, but Stereo doesn't use it (and its controls are hidden).
+        DesignOptions(midHighHz = 7000.0, regionOctaves = 1.0, fadeOctaves = 0.5).validate()
+        DesignOptions(midHighHz = 7000.0, regionOctaves = 1.0, fadeOctaves = 1.0, irMode = IrMode.STEREO, maxShiftMs = 5.0).validate()
+    }
 }

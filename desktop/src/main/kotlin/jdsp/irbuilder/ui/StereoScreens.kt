@@ -60,10 +60,10 @@ fun StereoPreview(d: StereoDesign) {
             Panel("No data", accent = Jdsp.MRed) { Note("No Combined sweep for this selection: this channel's IR is a pure delay.") }
         } else {
             fun mean(curves: List<DoubleArray>) = DoubleArray(f.size) { i -> curves.sumOf { it[i] } / curves.size }
-            val beforePh = mean(groups.map { d.excessPhaseDeg(d.combined(it)) })
-            val afterPh = mean(groups.map { d.excessPhaseDeg(d.predicted(it)) })
-            val beforeGd = mean(groups.map { d.groupDelayMs(d.combined(it)) })
-            val afterGd = mean(groups.map { d.groupDelayMs(d.predicted(it)) })
+            val beforePh = mean(groups.map { d.excessPhaseDeg(d.combined(it), d.delayHint(it)) })
+            val afterPh = mean(groups.map { d.excessPhaseDeg(d.predicted(it), d.delayHint(it)) })
+            val beforeGd = mean(groups.map { d.groupDelayMs(d.combined(it), d.delayHint(it)) })
+            val afterGd = mean(groups.map { d.groupDelayMs(d.predicted(it), d.delayHint(it)) })
             val inRange = f.indices.filter { f[it] in o.stereoMinHz..o.stereoMaxHz }
             val phLim = maxOf(90.0, ceil(inRange.maxOf { maxOf(abs(beforePh[it]), abs(afterPh[it])) } / 90.0) * 90.0)
             val gdLim = maxOf(2.0, ceil(inRange.maxOf { maxOf(abs(beforeGd[it]), abs(afterGd[it])) }))

@@ -75,11 +75,7 @@ object Importer {
         if (smoothing <= 0) return r
         // Start from the delay the file itself states: REW's header note (restored = exported
         // delayed by it) or an impulse's peak. Only the small remainder is estimated.
-        val hint = when (r.kind) {
-            SourceKind.REW_TEXT -> r.restoredDelayMs / 1000.0
-            SourceKind.IMPULSE_WAV -> (r.impulsePeakIndex ?: 0).toDouble() / sampleRate
-        }
-        return LoadedResponse(complexSmooth(r.response, freqs, smoothing, hint), r.kind, r.impulsePeakIndex, r.coverageHz, r.smoothing, r.restoredDelayMs)
+        return LoadedResponse(complexSmooth(r.response, freqs, smoothing, delayHintSeconds(r, sampleRate)), r.kind, r.impulsePeakIndex, r.coverageHz, r.smoothing, r.restoredDelayMs)
     }
 
     /**
@@ -101,6 +97,20 @@ object Importer {
      * The response's arrival time: the energy-weighted median of the local group delay between
      * neighbouring grid points. Robust to the dips and reflections a car measurement has.
      */
+    /**
+     * The arrival delay a file states itself: REW's header note (restored = exported delayed by it)
+     * or an impulse's peak. Estimating only the small remainder from the log-spaced grid avoids
+     * aliasing a long delay.
+     */
+    fun delayHintSeconds(r: LoadedResponse, sampleRate: Int): Double = when (r.kind) {
+        SourceKind.REW_TEXT -> r.restoredDelayMs / 1000.0
+        SourceKind.IMPULSE_WAV -> (r.impulsePeakIndex ?: 0).toDouble() / sampleRate
+    }
+
+    /** [h]'s arrival delay: [hintSeconds] plus the remainder estimated from the grid. */
+    internal fun bulkDelaySeconds(h: CVec, freqs: DoubleArray, hintSeconds: Double): Double =
+        hintSeconds + bulkDelaySeconds(h.delayed(freqs, -hintSeconds), freqs)
+
     internal fun bulkDelaySeconds(h: CVec, freqs: DoubleArray): Double {
         val taus = ArrayList<Pair<Double, Double>>(freqs.size)
         for (i in 0 until freqs.size - 1) {

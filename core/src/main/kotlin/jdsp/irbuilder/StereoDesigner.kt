@@ -100,11 +100,14 @@ class StereoDesign(
         return out
     }
 
+    /** The arrival delay [g]'s Combined file states (REW header delay or impulse peak), seconds. */
+    fun delayHint(g: LoadedGroup): Double = Importer.delayHintSeconds(g.responses.getValue(Band.COMBINED), options.sampleRate)
+
     /** Deviation of [h]'s phase from the best-fitting pure delay over the stereo range, degrees. */
-    fun excessPhaseDeg(h: CVec): DoubleArray = StereoDesigner.excessPhase(h, freqs, options).let { p -> DoubleArray(p.size) { Math.toDegrees(p[it]) } }
+    fun excessPhaseDeg(h: CVec, hintSeconds: Double = 0.0): DoubleArray = StereoDesigner.excessPhase(h, freqs, options, hintSeconds).let { p -> DoubleArray(p.size) { Math.toDegrees(p[it]) } }
 
     /** Group delay of [h] relative to its arrival, ms (from its smoothed excess phase). */
-    fun groupDelayMs(h: CVec): DoubleArray = StereoDesigner.groupDelayMs(StereoDesigner.excessPhase(h, freqs, options), freqs)
+    fun groupDelayMs(h: CVec, hintSeconds: Double = 0.0): DoubleArray = StereoDesigner.groupDelayMs(StereoDesigner.excessPhase(h, freqs, options, hintSeconds), freqs)
 }
 
 object StereoDesigner {
@@ -124,8 +127,8 @@ object StereoDesigner {
      * Unwrapped phase of [h] with its arrival time taken out, minus the straight line (pure delay)
      * that fits it best over the stereo range: what's left is the phase rotation to remove.
      */
-    internal fun excessPhase(h: CVec, f: DoubleArray, o: DesignOptions): DoubleArray {
-        val tau = Importer.bulkDelaySeconds(h, f)
+    internal fun excessPhase(h: CVec, f: DoubleArray, o: DesignOptions, hintSeconds: Double = 0.0): DoubleArray {
+        val tau = Importer.bulkDelaySeconds(h, f, hintSeconds)
         val p = unwrap(DoubleArray(f.size) { i ->
             val a = 2 * PI * f[i] * tau
             atan2(h.re[i] * sin(a) + h.im[i] * cos(a), h.re[i] * cos(a) - h.im[i] * sin(a))
@@ -191,8 +194,9 @@ object StereoDesigner {
             val zr = DoubleArray(n)
             val zi = DoubleArray(n)
             groups.forEachIndexed { p, g ->
-                val h = g.responses.getValue(Band.COMBINED).response
-                val tau = Importer.bulkDelaySeconds(h, f)
+                val r = g.responses.getValue(Band.COMBINED)
+                val h = r.response
+                val tau = Importer.bulkDelaySeconds(h, f, Importer.delayHintSeconds(r, o.sampleRate))
                 for (i in 0 until n) {
                     val m = h.abs(i)
                     if (m <= 0.0) continue
@@ -267,8 +271,8 @@ object StereoDesigner {
                 commonGainDb = commonGainDb, latencyMs = o.latencyMs, jdspLatencyMs = o.jdspLatencyMs, warnings = emptyList()))
 
         val positions = set.groups.filter { Band.COMBINED in it.responses }.map { g ->
-            val before = excessPhase(partial.combined(g), f, o)
-            val after = excessPhase(partial.predicted(g), f, o)
+            val before = excessPhase(partial.combined(g), f, o, partial.delayHint(g))
+            val after = excessPhase(partial.predicted(g), f, o, partial.delayHint(g))
             val bRms = Math.toDegrees(rms(before, idx))
             val aRms = Math.toDegrees(rms(after, idx))
             StereoPositionReport(
