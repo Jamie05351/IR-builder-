@@ -118,8 +118,15 @@ class PhaseDesign(
     }
 
     /** Power average over a seat's positions: level of the band sum and its efficiency. */
-    fun seatAverage(seat: Seat, channel: Channel, includeValidation: Boolean = false): SeatCurves? {
-        val gs = set.groups.filter { it.key.seat == seat && it.key.channel == channel && it.crossovers().isNotEmpty() && (includeValidation || !it.validationOnly) }
+    fun seatAverage(seat: Seat, channel: Channel, includeValidation: Boolean = false, crossover: Crossover? = null): SeatCurves? {
+        // For one crossover, only positions that measured both of its bands; otherwise prefer
+        // complete positions so partial ones don't stand in for bands they never measured.
+        val any = set.groups.filter { it.key.seat == seat && it.key.channel == channel && it.crossovers().isNotEmpty() && (includeValidation || !it.validationOnly) }
+        val gs = when {
+            crossover != null -> any.filter { crossover in it.crossovers() }
+            any.any { it.isComplete } -> any.filter { it.isComplete }
+            else -> any
+        }
         if (gs.isEmpty()) return null
         val n = freqs.size
         val before = DoubleArray(n)
@@ -168,10 +175,15 @@ object Designer {
         for (ch in Channel.entries) {
             val ci = ch.ordinal
             val mask = DoubleArray(n) { Regions.weight(f[it], o, corrected[ci]) }
-            val groups = set.groups.filter { it.key.channel == ch && it.crossovers().isNotEmpty() && !it.validationOnly }
-            if (groups.isEmpty()) continue
-            val counts = Seat.entries.associateWith { s -> groups.count { it.key.seat == s } }
-            val w = groups.map { o.seatWeight(it.key.seat) / counts.getValue(it.key.seat) }.let { raw -> raw.map { it / raw.sum() } }
+            if (corrected[ci].isEmpty()) continue
+            // Per crossover: only positions that measured both of its bands, with each seat's weight
+            // shared among that seat's positions for that crossover, so positions that can't see a
+            // crossover never dilute a seat's say there.
+            val byCrossover = corrected[ci].associateWith { xo ->
+                val gs = set.groups.filter { it.key.channel == ch && !it.validationOnly && xo in it.crossovers() }
+                val counts = Seat.entries.associateWith { s -> gs.count { it.key.seat == s } }
+                gs to gs.map { o.seatWeight(it.key.seat) / counts.getValue(it.key.seat) }.let { raw -> raw.map { it / raw.sum() } }
+            }
             val kr = DoubleArray(3) { 1.0 }
             val ki = DoubleArray(3)
             val rr = Array(3) { DoubleArray(3) }
@@ -181,6 +193,9 @@ object Designer {
                     kr.fill(1.0); ki.fill(0.0)
                     continue
                 }
+                // The crossover whose region this frequency is in (regions don't overlap in practice).
+                val xo = corrected[ci].maxBy { Regions.weight(f[j], o, listOf(it)) }
+                val (groups, w) = byCrossover.getValue(xo)
                 // R[b][c] = Σ_p w_p · conj(h_b) · h_c / Σ_b |h_b|²  (each position scale-free).
                 for (b in 0 until 3) { rr[b].fill(0.0); ri[b].fill(0.0) }
                 groups.forEachIndexed { p, g ->
@@ -296,7 +311,8 @@ object Designer {
                     change.average().round(2), change.max().round(2),
                 )
             }
-            val combined = g.responses[Band.COMBINED]?.let { r ->
+            // A Combined sweep plays every band, so it's only comparable with all three measured.
+            val combined = g.responses[Band.COMBINED]?.takeIf { g.isComplete }?.let { r ->
                 val c = r.response
                 var num = 0.0
                 var den = 0.0
@@ -317,17 +333,22 @@ object Designer {
         }
         val seats = Seat.entries.flatMap { seat ->
             Channel.entries.mapNotNull { ch ->
-                val c = partial.seatAverage(seat, ch) ?: return@mapNotNull null
-                val be = c.beforeEfficiencyDb
-                val ae = c.afterEfficiencyDb
-                SeatReport(seat, ch, c.positions, corrected[ch.ordinal].map { xo ->
+                // Each crossover's seat figures come only from positions that measured both of its
+                // bands; a crossover this seat has no such positions for is left out.
+                var positionsUsed = 0
+                val regions = corrected[ch.ordinal].mapNotNull perCrossover@{ xo ->
+                    val c = partial.seatAverage(seat, ch, crossover = xo) ?: return@perCrossover null
+                    positionsUsed = maxOf(positionsUsed, c.positions)
+                    val be = c.beforeEfficiencyDb
+                    val ae = c.afterEfficiencyDb
                     val idx = (0 until n).filter { Regions.inCore(f[it], xo, o) }
                     val change = idx.map { c.afterDb[it] - c.beforeDb[it] }
                     RegionMetrics(xo.label, xo.hz(o),
                         idx.map { be[it] }.average().round(2), idx.map { ae[it] }.average().round(2),
                         idx.minOf { be[it] }.round(2), idx.minOf { ae[it] }.round(2),
                         change.average().round(2), change.max().round(2))
-                })
+                }
+                if (regions.isEmpty()) null else SeatReport(seat, ch, positionsUsed, regions)
             }
         }
         val warnings = ArrayList<String>()
