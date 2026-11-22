@@ -426,3 +426,43 @@ class SmoothingTest {
         assertFailsWith<IllegalArgumentException> { DesignOptions(measurementSmoothing = 6).validate() }
     }
 }
+
+class PresmoothingTest {
+    private fun set(dir: File, label: (Band) -> String, appSmoothing: Int): MeasurementSet {
+        val ms = ArrayList<Measurement>()
+        for (seat in Seat.entries) for (ch in Channel.entries) for (b in Band.BRANCHES) {
+            val file = File(dir, "${seat.name}_c_${ch.name}_${b.fileName}.txt")
+            Fixtures.writeRew(file, { f -> Fixtures.band(b, f) }, smoothing = label(b))
+            ms += Measurement(file.path, seat, "c", ch, b, "ref-${ch.name}")
+        }
+        return MeasurementSet.load(ms, DesignOptions(measurementSmoothing = appSmoothing))
+    }
+
+    @Test
+    fun rewSmoothingStackedOnTheAppsIsFlagged() {
+        val dir = createTempDirectory("irb").toFile()
+        val c = Checks.run(set(dir, { "1/24 octave" }, 24))
+        val item = c.items.first { it.title.contains("already smoothed 1/24") }
+        assertEquals(Severity.WARNING, item.severity)
+        assertTrue(item.detail.contains("about 1/17"), item.detail)
+        // With the app's smoothing off, nothing stacks.
+        assertTrue(Checks.run(set(dir, { "1/24 octave" }, 0)).items.none { it.title.contains("already smoothed") })
+        // 1/48 from REW is fine.
+        assertTrue(Checks.run(set(dir, { "1/48 octave" }, 24)).items.none { it.title.contains("already smoothed") })
+    }
+
+    @Test
+    fun mixedExportSmoothingIsFlagged() {
+        val dir = createTempDirectory("irb").toFile()
+        val c = Checks.run(set(dir, { if (it == Band.HIGH) "1/12 octave" else "1/48 octave" }, 0))
+        assertTrue(c.items.any { it.severity == Severity.WARNING && it.title.contains("different smoothing") })
+    }
+
+    @Test
+    fun anImpulseResponseTextExportGetsAClearMessage() {
+        val dir = createTempDirectory("irb").toFile()
+        val file = File(dir, "ir.txt").apply { writeText(ImportTest.REW_HEADER + (0 until 500).joinToString("\n") { "%.6f".format(java.util.Locale.ROOT, kotlin.math.exp(-it / 30.0)) }) }
+        val e = assertFailsWith<IllegalArgumentException> { Importer.read(Measurement(file.path, Seat.DRIVER, "c", Channel.L, Band.LOW, "r"), geomspace(100.0, 1000.0, 16), 48000) }
+        assertTrue(e.message!!.contains("impulse response exported as text"), e.message)
+    }
+}

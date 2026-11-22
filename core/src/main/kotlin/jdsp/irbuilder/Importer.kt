@@ -40,6 +40,10 @@ class LoadedResponse(
                 ?: return !s.trim().lowercase().let { it == "none" || it.startsWith("no ") }
             return (m.groupValues[1].toIntOrNull() ?: 48) < 12
         }
+
+    /** REW's fixed 1/N-octave export smoothing, or null for none / not stated / variable. */
+    val presmoothingOctaveDenominator: Int?
+        get() = smoothing?.let { Regex("""1/(\d+)""").find(it)?.groupValues?.get(1)?.toIntOrNull() }
 }
 
 object Importer {
@@ -49,8 +53,25 @@ object Importer {
      * Reads a REW frequency/SPL/phase export or a calibrated mono impulse WAV onto [freqs], then
      * applies 1/[smoothing]-octave complex smoothing (0 = none). [freqs] must be log-spaced.
      */
-    fun read(m: Measurement, freqs: DoubleArray, sampleRate: Int, smoothing: Int = 0): LoadedResponse {
-        val r = readRaw(m, freqs, sampleRate)
+    fun read(
+        m: Measurement, freqs: DoubleArray, sampleRate: Int, smoothing: Int = 0,
+        /** The span this file must cover; null means the whole grid. */
+        required: ClosedFloatingPointRange<Double>? = null,
+    ): LoadedResponse = silenceOutsideSweep(readSmoothed(m, freqs, sampleRate, smoothing, required), freqs)
+
+    /** A band-limited sweep says nothing beyond its ends: the band is taken as silent there. */
+    private fun silenceOutsideSweep(r: LoadedResponse, freqs: DoubleArray): LoadedResponse {
+        if (freqs.all { it in r.coverageHz }) return r
+        val h = r.response.copy()
+        for (i in freqs.indices) if (freqs[i] < r.coverageHz.start * 0.9999 || freqs[i] > r.coverageHz.endInclusive * 1.0001) {
+            h.re[i] = 0.0
+            h.im[i] = 0.0
+        }
+        return LoadedResponse(h, r.kind, r.impulsePeakIndex, r.coverageHz, r.smoothing, r.restoredDelayMs)
+    }
+
+    private fun readSmoothed(m: Measurement, freqs: DoubleArray, sampleRate: Int, smoothing: Int, required: ClosedFloatingPointRange<Double>?): LoadedResponse {
+        val r = readRaw(m, freqs, sampleRate, required ?: freqs.first()..freqs.last())
         if (smoothing <= 0) return r
         // Start from the delay the file itself states: REW's header note (restored = exported
         // delayed by it) or an impulse's peak. Only the small remainder is estimated.
@@ -101,7 +122,7 @@ object Importer {
         return taus.last().first
     }
 
-    private fun readRaw(m: Measurement, freqs: DoubleArray, sampleRate: Int): LoadedResponse {
+    private fun readRaw(m: Measurement, freqs: DoubleArray, sampleRate: Int, required: ClosedFloatingPointRange<Double>): LoadedResponse {
         require(m.position.isNotBlank()) { "Position is empty" }
         require(m.timingReference.isNotBlank()) { "Timing-reference ID is empty" }
         require(m.calibrationDb.isFinite() && abs(m.calibrationDb) <= 300) { "Calibration offset must be finite and within ±300 dB" }
@@ -110,7 +131,7 @@ object Importer {
         require(file.length() <= MAX_FILE_BYTES) { "${file.name}: file exceeds 128 MiB" }
         return when (file.extension.lowercase()) {
             "wav" -> readImpulse(file, m, freqs, sampleRate)
-            "txt", "csv", "frd" -> readRewText(file, m, freqs)
+            "txt", "csv", "frd" -> readRewText(file, m, freqs, required)
             "mdat" -> throw IllegalArgumentException("${file.name}: export the measurement from REW as text (File › Export › Measurement as text); .mdat is not read directly")
             else -> throw IllegalArgumentException("${file.name}: use REW frequency/SPL/phase text (.txt/.csv/.frd) or a mono impulse .wav")
         }
@@ -158,7 +179,7 @@ object Importer {
         return text.removePrefix("\uFEFF")
     }
 
-    private fun readRewText(file: File, m: Measurement, freqs: DoubleArray): LoadedResponse {
+    private fun readRewText(file: File, m: Measurement, freqs: DoubleArray, required: ClosedFloatingPointRange<Double>): LoadedResponse {
         val f = ArrayList<Double>()
         val spl = ArrayList<Double>()
         val deg = ArrayList<Double>()
@@ -168,6 +189,7 @@ object Importer {
         var sawDelay = false
         var fromRew = false
         var phaseMissing = false
+        var singleNumbers = 0
         for (line in decode(file.readBytes()).lineSequence()) {
             if (line.startsWith("*")) {
                 sawHeader = true
@@ -182,6 +204,7 @@ object Importer {
             }
             val row = rowNumbers(line)
             if (row == null) {
+                if (line.trim().replace(',', '.').toDoubleOrNull() != null) singleNumbers++
                 // Two numbers and nothing else: an export without the phase column.
                 val two = line.trim().split(spaceOrSemicolon).filter { it.isNotEmpty() }
                 if (two.size == 2 && two.all { it.replace(',', '.').toDoubleOrNull() != null }) phaseMissing = true
@@ -192,6 +215,9 @@ object Importer {
             if (!freq.isFinite() || !db.isFinite() || !ph.isFinite() || freq <= 0.0) continue
             if (f.isNotEmpty() && freq <= f.last()) continue
             f += freq; spl += db; deg += ph
+        }
+        require(!(f.isEmpty() && singleNumbers >= 16)) {
+            "${file.name}: looks like an impulse response exported as text (one value per line). Use File › Export › Measurement as text (frequency, SPL, phase), or export the impulse response as a WAV."
         }
         require(!(phaseMissing && f.isEmpty())) { "${file.name}: a phase column is required; the band sum depends on relative phase" }
         require(f.size >= 16) { "${file.name}: no frequency / SPL / phase rows. Export from REW with File › Export › Measurement as text" }
@@ -204,8 +230,8 @@ object Importer {
         require(sawDelay || fromRew) {
             "${file.name}: its header has no \"Delay ... ms\" note, so the delay REW took out of the phase is unknown. Export it from REW with File › Export › Measurement as text."
         }
-        require(f.first() <= freqs.first() * 1.0001 && f.last() >= freqs.last() * 0.9999) {
-            "${file.name}: covers %.1f–%.0f Hz but the design needs %.1f–%.0f Hz".format(f.first(), f.last(), freqs.first(), freqs.last())
+        require(f.first() <= required.start * 1.0001 && f.last() >= required.endInclusive * 0.9999) {
+            "${file.name}: covers %.0f–%.0f Hz, but its ${m.band.label} band needs at least %.0f–%.0f Hz (an octave either side of its crossovers). Sweep or export a wider range.".format(f.first(), f.last(), required.start, required.endInclusive)
         }
         require(spl.max() > -180) { "${file.name}: response appears silent" }
         require(spl.all { abs(it) <= 500 }) { "${file.name}: magnitude values exceed ±500 dB" }

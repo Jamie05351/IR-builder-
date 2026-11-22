@@ -145,5 +145,20 @@ data class DesignOptions(
 
 internal fun pow2(x: Double) = Math.pow(2.0, x)
 
+/**
+ * The frequency span each band's sweep must cover: an octave either side of its own crossovers
+ * (as J_DSP's Band Align asks of Mid), with Low reaching two octaves below Low/Mid and High two
+ * above Mid/High. Outside its sweep a band is taken as silent, which it is that far out of band.
+ * Held within the analysis range.
+ */
+fun requiredCoverageHz(band: Band, o: DesignOptions): ClosedFloatingPointRange<Double> {
+    val r = when (band) {
+        Band.LOW -> o.lowMidHz / 4..o.lowMidHz * 2
+        Band.MID, Band.COMBINED -> o.lowMidHz / 2..o.midHighHz * 2
+        Band.HIGH -> o.midHighHz / 2..o.midHighHz * 4
+    }
+    return maxOf(r.start, o.analysisMinHz)..minOf(r.endInclusive, o.analysisMaxHz)
+}
+
 /** Measurement smoothing choices, 1/N octave; 0 is none. */
 val MEASUREMENT_SMOOTHING_CHOICES = listOf(0, 48, 24, 12)
