@@ -168,6 +168,11 @@ class AppState(private var scope: CoroutineScope) {
             added++
         }
         status = "Added $added file(s). Check each row's tags."
+        // Phase IRs from nothing but Combined sweeps can only be the Stereo IR.
+        if (tool == Tool.PHASE_IRS && options.irMode == jdsp.irbuilder.IrMode.PER_BAND && measurements.isNotEmpty() && measurements.all { it.band == Band.COMBINED }) {
+            updateOptions(options.copy(irMode = jdsp.irbuilder.IrMode.STEREO, maxShiftMs = maxOf(options.maxShiftMs, 5.0)))
+            status = "Added $added Combined sweep(s): switched the convolver mode to Stereo (change it on the Checks or Design page)."
+        }
         invalidate()
     }
 

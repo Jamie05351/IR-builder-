@@ -20,9 +20,28 @@ import jdsp.irbuilder.DesignOptions
 import jdsp.irbuilder.Severity
 import kotlin.math.roundToInt
 
+/** Per-band or Stereo, for the Phase IRs tool. Stereo needs more shift for the summed low end. */
+@Composable
+fun ConvolverModeChips(state: AppState) {
+    val o = state.options
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        jdsp.irbuilder.IrMode.entries.forEach { m ->
+            Chip(m.label, o.irMode == m, {
+                state.updateOptions(if (m == jdsp.irbuilder.IrMode.STEREO) o.copy(irMode = m, maxShiftMs = maxOf(o.maxShiftMs, 5.0)) else o.copy(irMode = m))
+            }, Jdsp.HighPink)
+        }
+    }
+}
+
 @Composable
 fun ChecksScreen(state: AppState) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        if (state.tool == jdsp.irbuilder.Tool.PHASE_IRS) {
+            Panel("Convolver mode", accent = Jdsp.HighPink) {
+                ConvolverModeChips(state)
+                Note(if (state.options.irMode == jdsp.irbuilder.IrMode.STEREO) "Stereo: one IR after the band sum, from Combined sweeps (all bands playing)." else "Per-band: Low/Mid/High IRs before the band sum, from band-solo sweeps.")
+            }
+        }
         Panel("Measurement setup", accent = Jdsp.Cyan) {
             val o = state.options
             fun set(n: DesignOptions) = state.updateOptions(n)
@@ -126,14 +145,7 @@ fun DesignScreen(state: AppState) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         val stereo = o.irMode == jdsp.irbuilder.IrMode.STEREO
         Panel("Convolver mode", accent = Jdsp.HighPink) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                jdsp.irbuilder.IrMode.entries.forEach { m ->
-                    Chip(m.label, o.irMode == m, {
-                        // Linearising the summed low-frequency phase needs more shift than band alignment.
-                        set(if (m == jdsp.irbuilder.IrMode.STEREO) o.copy(irMode = m, maxShiftMs = maxOf(o.maxShiftMs, 5.0)) else o.copy(irMode = m))
-                    }, Jdsp.HighPink)
-                }
-            }
+            ConvolverModeChips(state)
             Note(
                 if (stereo) "One stereo IR for J_DSP's Stereo slot, after the band sum. It removes the phase rotation of the summed response " +
                     "(crossovers and speakers) toward one arrival time at both seats, phase-only. It acts on every band alike, so it can't " +

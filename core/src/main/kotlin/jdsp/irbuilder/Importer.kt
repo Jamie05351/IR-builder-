@@ -94,10 +94,6 @@ object Importer {
     }
 
     /**
-     * The response's arrival time: the energy-weighted median of the local group delay between
-     * neighbouring grid points. Robust to the dips and reflections a car measurement has.
-     */
-    /**
      * The arrival delay a file states itself: REW's header note (restored = exported delayed by it)
      * or an impulse's peak. Estimating only the small remainder from the log-spaced grid avoids
      * aliasing a long delay.
@@ -111,26 +107,53 @@ object Importer {
     internal fun bulkDelaySeconds(h: CVec, freqs: DoubleArray, hintSeconds: Double): Double =
         hintSeconds + bulkDelaySeconds(h.delayed(freqs, -hintSeconds), freqs)
 
+    /**
+     * The response's arrival time from the local group delay between neighbouring grid points.
+     *
+     * Not weighted by energy: in a car the bass is 20 dB louder and has a long group delay (modes,
+     * the subsonic), which would pull the estimate many milliseconds late. Instead each grid point
+     * counts the same (equal weight per octave on the log grid), only where the response is within
+     * 30 dB of its loudest third-octave, so a band's stopband noise doesn't vote. Frequencies from
+     * 300 Hz up decide when the response has them, since that's where the direct sound sets the
+     * timing; a pure bass response uses what it has. A first pass uses only steps short enough to
+     * read a long delay unambiguously (±[COARSE_RANGE_S]); the second refines on everything.
+     */
     internal fun bulkDelaySeconds(h: CVec, freqs: DoubleArray): Double {
-        val taus = ArrayList<Pair<Double, Double>>(freqs.size)
-        for (i in 0 until freqs.size - 1) {
-            // arg(H[i+1]·conj(H[i])) is the phase step between neighbours, free of wrapping.
-            val re = h.re[i + 1] * h.re[i] + h.im[i + 1] * h.im[i]
-            val im = h.im[i + 1] * h.re[i] - h.re[i + 1] * h.im[i]
-            val w = h.abs(i) * h.abs(i + 1)
-            if (w <= 0.0) continue
-            taus += -kotlin.math.atan2(im, re) / (2 * PI * (freqs[i + 1] - freqs[i])) to w
+        val n = freqs.size
+        if (n < 3) return 0.0
+        val power = DoubleArray(n) { h.re[it] * h.re[it] + h.im[it] * h.im[it] }
+        val ppo = (n - 1) / kotlin.math.log2(freqs.last() / freqs.first())
+        val half = (ppo / 6).toInt().coerceAtLeast(1)
+        val third = DoubleArray(n) { i ->
+            var acc = 0.0
+            var k = 0
+            for (j in (i - half).coerceAtLeast(0)..(i + half).coerceAtMost(n - 1)) { acc += power[j]; k++ }
+            acc / k
         }
-        if (taus.isEmpty()) return 0.0
-        taus.sortBy { it.first }
-        val half = taus.sumOf { it.second } / 2
-        var acc = 0.0
-        for ((tau, w) in taus) {
-            acc += w
-            if (acc >= half) return tau
+        val gate = (third.maxOrNull() ?: return 0.0) * 1e-3
+        val voting = (0 until n - 1).filter { power[it] > 0 && power[it + 1] > 0 && third[it] >= gate }
+        if (voting.isEmpty()) return 0.0
+        val upper = voting.filter { freqs[it] >= DIRECT_SOUND_HZ }
+        val use = if (upper.size >= voting.size / 5 && upper.size >= 8) upper else voting
+        fun localTau(c: CVec, i: Int): Double {
+            val re = c.re[i + 1] * c.re[i] + c.im[i + 1] * c.im[i]
+            val im = c.im[i + 1] * c.re[i] - c.re[i + 1] * c.im[i]
+            return -kotlin.math.atan2(im, re) / (2 * PI * (freqs[i + 1] - freqs[i]))
         }
-        return taus.last().first
+        fun median(c: CVec, idx: List<Int>): Double? {
+            if (idx.isEmpty()) return null
+            val t = idx.map { localTau(c, it) }.sorted()
+            return t[t.size / 2]
+        }
+        // Coarse: only steps that can tell ±COARSE_RANGE_S apart.
+        val coarseIdx = use.filter { 1.0 / (2 * (freqs[it + 1] - freqs[it])) >= COARSE_RANGE_S }
+        val coarse = median(h, coarseIdx) ?: 0.0
+        val rest = h.delayed(freqs, -coarse)
+        return coarse + (median(rest, use) ?: 0.0)
     }
+
+    private const val DIRECT_SOUND_HZ = 300.0
+    private const val COARSE_RANGE_S = 0.02
 
     private fun readRaw(m: Measurement, freqs: DoubleArray, sampleRate: Int, required: ClosedFloatingPointRange<Double>): LoadedResponse {
         require(m.position.isNotBlank()) { "Position is empty" }
