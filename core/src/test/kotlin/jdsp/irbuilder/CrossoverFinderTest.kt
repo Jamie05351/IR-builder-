@@ -194,3 +194,18 @@ class CrossoverFinderTest {
         for (x in listOf(1e-9, 0.001, 0.5, 1.0, 1.7, 3.3, 1234.5)) assertEquals(log10(x), CrossoverFinder.fastLog10(x), 1e-7)
     }
 }
+
+class FinderProjectTest {
+    @Test
+    fun finderSettingsSurviveSaveAndOpen() {
+        val f = FinderOptions(
+            current = JdspCrossovers(lowLowpass = XoFilter(120.0, XoType.BW3), subsonic = true, subsonicHz = 35.0),
+            midHigh = false,
+        ).withLimits(XoSlot.HIGH_HIGHPASS, SlotLimits(3000.0, 4000.0, setOf(XoType.BW4)))
+        val file = kotlin.io.path.createTempFile("p", ".jirb").toFile()
+        Project.save(Project(tool = Tool.CROSSOVER_FINDER, finder = f), file)
+        val p = Project.load(file)
+        assertEquals(Tool.CROSSOVER_FINDER, p.tool)
+        assertEquals(f, p.finder)
+    }
+}
