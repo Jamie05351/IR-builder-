@@ -53,7 +53,9 @@ object Checks {
         fun warn(t: String, d: String) { items += CheckItem(Severity.WARNING, t, d) }
         fun info(t: String, d: String) { items += CheckItem(Severity.INFO, t, d) }
 
-        try { o.validate() } catch (e: IllegalArgumentException) { err("Design settings", e.message ?: "Invalid settings") }
+        // Only what reading needs: the IR filter settings are the Phase IR design's to check, so
+        // they never block the Band Align tool, which can't reach them.
+        try { o.validateMeasurement() } catch (e: IllegalArgumentException) { err("Measurement settings", e.message ?: "Invalid settings") }
         if (set.measurements.isEmpty()) {
             err("No measurements", "Import software-band-solo sweeps for both seats and both channels.")
             return CheckResult(items, emptyList())

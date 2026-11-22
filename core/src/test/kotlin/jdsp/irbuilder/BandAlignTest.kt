@@ -3,6 +3,7 @@ package jdsp.irbuilder
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -130,56 +131,48 @@ class BandAlignTest {
         assertEquals(result(a, Channel.L, AlignPair.LOW_MID).proposal, result(b, Channel.L, AlignPair.LOW_MID).proposal)
         assertTrue(result(b, Channel.L, AlignPair.LOW_MID).positions.any { it.validationOnly })
     }
-
-    @Test
-    fun theAlignedSetIsWhatTheMeasurementsWillBeAndFeedsTheDesign() {
-        val ms = Fixtures.measurementSet(positions = listOf("c"), delays = { _, b -> if (b == Band.LOW) 0.0015 else 0.0 }, combined = true)
-        val set = MeasurementSet.load(ms, DesignOptions())
-        val r = BandAlign.solve(set, AlignOptions(timing(low = 2.0), midHigh = false))
-        assertTrue(r.hasChanges)
-        val aligned = r.alignedSet(set)
-        val o = set.options
-        for (g in aligned.groups) {
-            assertFalse(Band.COMBINED in g.responses)
-            val before = set.group(g.key)!!
-            val pb = Checks.relativePhase(before.branch(Band.LOW), before.branch(Band.MID), set.freqs, o.lowMidHz)
-            val pa = Checks.relativePhase(g.branch(Band.LOW), g.branch(Band.MID), set.freqs, o.lowMidHz)
-            assertTrue(kotlin.math.abs(pa) < kotlin.math.abs(pb), "before ${Math.toDegrees(pb)}°, after ${Math.toDegrees(pa)}°")
-        }
-        // The phase design runs on the aligned set.
-        val d = Designer.design(aligned)
-        assertTrue(d.report.positions.isNotEmpty())
-    }
 }
 
-class BandAlignExportTest {
-    @Test
-    fun packageListsTheJdspChangesTheIrsNeed() {
-        val ms = Fixtures.measurementSet(positions = listOf("c"), delays = { _, b -> if (b == Band.LOW) 0.0015 else 0.0 })
-        val set = MeasurementSet.load(ms, DesignOptions(taps = 8192, latencyFrames = 4096))
-        val t = JdspTiming(BandSetting(2.0), BandSetting(2.0))
-        val align = BandAlign.solve(set, AlignOptions(t, midHigh = false))
-        val d = Designer.design(set, align)
-        assertEquals(2, d.report.jdspSettingChanges.size)
-        assertTrue(d.report.warnings.first().contains("Band Align"))
-        val dir = kotlin.io.path.createTempDirectory("irb-out").toFile()
-        Exporter.export(d, dir)
-        val readme = java.io.File(dir, "README.txt").readText()
-        assertTrue(readme.contains("FIRST: Band Align changes"), readme)
-        assertTrue(readme.contains("Low L: delay 2.00 →"), readme)
-        assertTrue(readme.lines().none { it.startsWith("            ") }, "README indentation broken:\n$readme")
-        assertTrue(java.io.File(dir, "manifest.json").readText().contains("jdsp_setting_changes"))
-        // Without changes nothing extra is written.
-        val plain = Designer.design(set)
-        assertTrue(plain.report.jdspSettingChanges.isEmpty())
-        assertFalse(Exporter.readme(plain).contains("Band Align"))
-    }
-
+class BandAlignProjectTest {
     @Test
     fun projectKeepsBandAlignSettings() {
         val file = java.io.File(kotlin.io.path.createTempDirectory("irb").toFile(), "p.jirb")
         val p = Project(tool = Tool.BAND_ALIGN, align = AlignOptions(JdspTiming(lowL = BandSetting(1.25, true)), lowMid = true, midHigh = false))
         Project.save(p, file)
         assertEquals(p, Project.load(file))
+    }
+}
+
+class ToolSeparationTest {
+    @Test
+    fun irFilterSettingsNeverBlockTheChecks() {
+        // An IR-only setting that's invalid (taps not a power of two) must not stop Band Align.
+        val ms = Fixtures.measurementSet(positions = listOf("c"))
+        val bad = DesignOptions(taps = 3000)
+        assertFailsWith<IllegalArgumentException> { bad.validate() }
+        val checks = Checks.run(MeasurementSet.load(ms, bad))
+        assertTrue(checks.canDesign, checks.items.joinToString { it.title })
+        // A bad crossover does matter to both tools.
+        val badXo = Checks.run(MeasurementSet.load(ms, DesignOptions(midHighHz = 200.0)))
+        assertTrue(badXo.items.any { it.severity == Severity.ERROR && it.title == "Measurement settings" })
+    }
+
+    @Test
+    fun bandAlignScoresAroundTheEnteredCrossovers() {
+        val ms = Fixtures.measurementSet(positions = listOf("c"))
+        val r = BandAlign.solve(MeasurementSet.load(ms, DesignOptions(lowMidHz = 200.0, midHighHz = 3000.0)), AlignOptions())
+        val lm = r.results.first { it.pair == AlignPair.LOW_MID }.bandHz
+        val mh = r.results.first { it.pair == AlignPair.MID_HIGH }.bandHz
+        assertEquals(80.0, lm.start, 1e-9); assertEquals(500.0, lm.endInclusive, 1e-9)
+        assertEquals(1200.0, mh.start, 1e-9); assertEquals(7500.0, mh.endInclusive, 1e-9)
+    }
+
+    @Test
+    fun theIrDesignNoLongerTakesBandAlignInput() {
+        // The two tools are independent: a design's report and package say nothing about Band Align.
+        val ms = Fixtures.measurementSet(positions = listOf("c"), delays = { _, b -> if (b == Band.LOW) 0.0015 else 0.0 })
+        val d = Designer.design(MeasurementSet.load(ms, DesignOptions(taps = 8192, latencyFrames = 4096)))
+        assertFalse(Exporter.readme(d).contains("Band Align"))
+        assertFalse(Exporter.manifest(d).containsKey("jdsp_setting_changes"))
     }
 }

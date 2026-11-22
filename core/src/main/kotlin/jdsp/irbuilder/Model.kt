@@ -99,22 +99,32 @@ data class DesignOptions(
     /** Highest frequency measurements must cover. */
     val analysisMaxHz: Double get() = minOf(sampleRate * 0.45, midHighHz * pow2(regionOctaves + fadeOctaves + 0.25))
 
-    fun validate() {
-        val numbers = listOf(lowMidHz, midHighHz, regionOctaves, fadeOctaves, maxShiftMs, smoothingOctaves, regularization, driverWeight, passengerWeight)
-        require(numbers.all { it.isFinite() }) { "All settings must be finite numbers" }
+    /**
+     * What reading and checking measurements needs (both tools): sample rate, crossovers, the
+     * analysis range and measurement smoothing. The IR filter settings are left to [validate].
+     */
+    fun validateMeasurement() {
+        require(listOf(lowMidHz, midHighHz, regionOctaves, fadeOctaves).all { it.isFinite() }) { "Crossover and region settings must be finite numbers" }
         require(sampleRate == 44100 || sampleRate == 48000) { "Sample rate must be 44100 or 48000 Hz" }
-        require(taps in 1024..65536 && taps and (taps - 1) == 0) { "Taps must be a power of two from 1024 to 65536" }
-        require(!(sampleRate == 44100 && taps > 32768)) {
-            "44100 Hz packages are limited to 32768 taps so they still fit J_DSP's limit after resampling to 48000 Hz"
-        }
-        require(latencyFrames in taps / 4..3 * taps / 4) { "Common delay must be between a quarter and three quarters of the tap count" }
         require(lowMidHz >= 20) { "Low/Mid crossover must be at least 20 Hz (J_DSP package rule)" }
         require(midHighHz > lowMidHz * 2) { "Mid/High crossover must be more than an octave above Low/Mid" }
         require(midHighHz < sampleRate * 0.4) { "Mid/High crossover is too close to Nyquist" }
         require(regionOctaves in 0.25..2.0) { "Correction region must be 0.25 to 2 octaves" }
         require(fadeOctaves in 0.1..1.5) { "Fade width must be 0.1 to 1.5 octaves" }
-        require(smoothingOctaves in 0.0..1.0) { "Smoothing must be 0 to 1 octave" }
         require(measurementSmoothing in MEASUREMENT_SMOOTHING_CHOICES) { "Measurement smoothing must be none, 1/48, 1/24 or 1/12 octave" }
+    }
+
+    /** Everything the Phase IR design needs: [validateMeasurement] plus the filter settings. */
+    fun validate() {
+        validateMeasurement()
+        val numbers = listOf(maxShiftMs, smoothingOctaves, regularization, driverWeight, passengerWeight)
+        require(numbers.all { it.isFinite() }) { "All settings must be finite numbers" }
+        require(taps in 1024..65536 && taps and (taps - 1) == 0) { "Taps must be a power of two from 1024 to 65536" }
+        require(!(sampleRate == 44100 && taps > 32768)) {
+            "44100 Hz packages are limited to 32768 taps so they still fit J_DSP's limit after resampling to 48000 Hz"
+        }
+        require(latencyFrames in taps / 4..3 * taps / 4) { "Common delay must be between a quarter and three quarters of the tap count" }
+        require(smoothingOctaves in 0.0..1.0) { "Smoothing must be 0 to 1 octave" }
         require(regularization in 0.0..10.0) { "Regularization must be 0 to 10" }
         require(maxShiftMs > 0 && maxShiftMs <= 20) { "Maximum shift must be above 0 and at most 20 ms" }
         require(maxShiftMs * sampleRate / 1000.0 < minOf(latencyFrames, taps - latencyFrames) / 2.0) {

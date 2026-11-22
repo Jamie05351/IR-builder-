@@ -23,13 +23,28 @@ import kotlin.math.roundToInt
 @Composable
 fun ChecksScreen(state: AppState) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Panel("Measurement smoothing", accent = Jdsp.Cyan) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                jdsp.irbuilder.MEASUREMENT_SMOOTHING_CHOICES.forEach { n ->
-                    Chip(if (n == 0) "None" else "1/$n oct", state.options.measurementSmoothing == n, { state.updateOptions(state.options.copy(measurementSmoothing = n)) }, Jdsp.Cyan)
+        Panel("Measurement setup", accent = Jdsp.Cyan) {
+            val o = state.options
+            fun set(n: DesignOptions) = state.updateOptions(n)
+            Note("Used by both tools. Enter the crossover corners J_DSP had during the sweeps: Band Align scores around them and the Phase IRs correct around them.")
+            Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.Bottom) {
+                Labeled("Low/Mid crossover (Hz)") { NumberField(o.lowMidHz, { set(o.copy(lowMidHz = it)) }, accent = Jdsp.LowBand) }
+                Labeled("Mid/High crossover (Hz)") { NumberField(o.midHighHz, { set(o.copy(midHighHz = it)) }, accent = Jdsp.HighBand) }
+                Labeled("Sample rate (impulse WAVs)") {
+                    GlassDropdown(o.sampleRate, listOf(48000, 44100), { "$it Hz" }, { rate ->
+                        val taps = if (rate == 44100) minOf(o.taps, 32768) else o.taps
+                        set(o.copy(sampleRate = rate, taps = taps, latencyFrames = if (taps != o.taps) taps / 2 else o.latencyFrames))
+                    })
                 }
             }
-            Note("Complex (vector) smoothing applied to every file as it's read, so the checks, Band Align, the phase solver and the plots all use the same data. Each file's arrival time is taken out first and put back after, so phase stays exact. 1/24 suits most car measurements; 1/12 for noisy ones. Changing it re-reads the files.")
+            Text("Smoothing", color = Jdsp.TextDim, fontSize = 12.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                jdsp.irbuilder.MEASUREMENT_SMOOTHING_CHOICES.forEach { n ->
+                    Chip(if (n == 0) "None" else "1/$n oct", o.measurementSmoothing == n, { set(o.copy(measurementSmoothing = n)) }, Jdsp.Cyan)
+                }
+            }
+            Note("Complex (vector) smoothing applied to every file as it's read, so the checks, Band Align, the phase solver and the plots all use the same data. Each file's arrival time is taken out first and put back after, so phase stays exact. 1/24 suits most car measurements; 1/12 for noisy ones. Changing any of these re-reads the files.")
+            runCatching { o.validateMeasurement() }.exceptionOrNull()?.message?.let { Note(it, Jdsp.MRed) }
         }
         Panel("Measurement checks", accent = Jdsp.MGreen, trailing = {
             GlassButton("Run checks", { state.runChecks() }, accent = Jdsp.MGreen, enabled = state.measurements.isNotEmpty() && state.busy == null)
@@ -43,7 +58,8 @@ fun ChecksScreen(state: AppState) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Badge("${c.errors} errors", if (c.errors > 0) Jdsp.MRed else Jdsp.MGreen)
                 Badge("${c.warnings} warnings", if (c.warnings > 0) Jdsp.MidYellow else Jdsp.MGreen)
-                Badge(if (c.canDesign) "Ready to design" else "Fix errors first", if (c.canDesign) Jdsp.MGreen else Jdsp.MRed)
+                val ready = if (state.tool == jdsp.irbuilder.Tool.BAND_ALIGN) "Ready for Band Align" else "Ready to design"
+                Badge(if (c.canDesign) ready else "Fix errors first", if (c.canDesign) Jdsp.MGreen else Jdsp.MRed)
             }
             c.items.forEach { item ->
                 val color = when (item.severity) {

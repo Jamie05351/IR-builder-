@@ -35,6 +35,7 @@ fun BandAlignScreen(state: AppState) {
         }
         Panel("J_DSP delays and polarity during the sweeps", accent = Jdsp.LightBlue) {
             Note("Enter exactly what J_DSP had when you measured (Alignment › DELAY page). Proposals are moves from these values, 0–${trimNumber(BandAlign.DELAY_MAX_MS)} ms in 0.01 ms steps.")
+            Note("Scored around the crossovers set on the Checks page: Low/Mid ${trimNumber(state.options.lowMidHz)} Hz, Mid/High ${trimNumber(state.options.midHighHz)} Hz. Check they match J_DSP.", Jdsp.LightBlue)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("", modifier = Modifier.width(70.dp))
                 for (ch in Channel.entries) {

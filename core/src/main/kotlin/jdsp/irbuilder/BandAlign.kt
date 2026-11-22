@@ -99,31 +99,6 @@ class BandAlignReport(
     val before: JdspTiming,
 ) {
     val hasChanges get() = newTiming != null && changes.isNotEmpty()
-
-    /**
-     * The measurements as they will be once [changes] are made: each moved band shifted in time
-     * and sign-flipped exactly, Combined sweeps dropped (they were taken with the old timing).
-     * The shared offset delays every band equally, so it changes nothing relative and is left out.
-     */
-    fun alignedSet(set: MeasurementSet): MeasurementSet {
-        if (!hasChanges) return set
-        val t = newTiming!!
-        val groups = set.groups.map { g ->
-            val responses = LinkedHashMap<Band, LoadedResponse>()
-            for ((band, r) in g.responses) {
-                if (band == Band.COMBINED) continue
-                val old = before.get(band, g.key.channel)
-                val new = t.get(band, g.key.channel)
-                val dt = (new.delayMs - sharedOffsetMs - old.delayMs) / 1000.0
-                val sign = if (new.inverted != old.inverted) -1.0 else 1.0
-                responses[band] = if (dt == 0.0 && sign == 1.0) r else LoadedResponse(
-                    shift(r.response, set.freqs, dt, sign), r.kind, r.impulsePeakIndex, r.coverageHz, r.smoothing, r.restoredDelayMs,
-                )
-            }
-            LoadedGroup(g.key, g.validationOnly, responses, g.measurements.filterKeys { it != Band.COMBINED })
-        }
-        return MeasurementSet(set.options, set.freqs, groups, set.loadErrors, set.measurements)
-    }
 }
 
 /**

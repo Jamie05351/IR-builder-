@@ -78,32 +78,7 @@ data class DesignReport(
     val jdspLatencyMs: Double,
     val prediction: String = "Linear prediction from the exported finite FIR taps and the imported measurements; not a post-install measurement.",
     val warnings: List<String>,
-    /** J_DSP delay/polarity changes from Band Align the IRs were designed for; empty when none. */
-    val jdspSettingChanges: List<JdspSettingChange> = emptyList(),
 )
-
-/** A J_DSP band output's delay/polarity change, as listed in the report and manifest. */
-@Serializable
-data class JdspSettingChange(
-    val output: String,
-    val delayMsFrom: Double,
-    val delayMsTo: Double,
-    val invertedFrom: Boolean,
-    val invertedTo: Boolean,
-) {
-    val text: String
-        get() = buildString {
-            append(output).append(": ")
-            val parts = ArrayList<String>()
-            if (kotlin.math.abs(delayMsFrom - delayMsTo) > 1e-6) parts += "delay %.2f → %.2f ms".format(java.util.Locale.ROOT, delayMsFrom, delayMsTo)
-            if (invertedFrom != invertedTo) parts += "polarity ${if (invertedTo) "normal → inverted" else "inverted → normal"}"
-            append(parts.joinToString(", "))
-        }
-
-    companion object {
-        fun of(c: SettingChange) = JdspSettingChange(c.label, c.from.delayMs, c.to.delayMs, c.from.inverted, c.to.inverted)
-    }
-}
 
 /** Result of a phase-only design. Impulses are indexed [band][channel], responses [channel][band]. */
 class PhaseDesign(
@@ -115,8 +90,6 @@ class PhaseDesign(
     val impulses: Array<Array<FloatArray>>,
     val commonGainDb: Double,
     val report: DesignReport,
-    /** Band Align the IRs were designed on top of, when its changes were used. */
-    val alignment: BandAlignReport? = null,
 ) {
     val freqs get() = set.freqs
     private val commonGain = Math.pow(10.0, commonGainDb / 20)
@@ -172,14 +145,8 @@ class SeatCurves(val beforeDb: DoubleArray, val afterDb: DoubleArray, val cohere
 object Designer {
     private const val SWEEPS = 200
 
-    /**
-     * Designs the phase IRs. With an [alignment] that has changes, the design runs on the
-     * measurements as they will be once those J_DSP delay/polarity changes are made, and the
-     * changes are listed in the report: the IRs are only right with them applied.
-     */
-    fun design(measured: MeasurementSet, alignment: BandAlignReport? = null): PhaseDesign {
-        val used = alignment?.takeIf { it.hasChanges }
-        val set = used?.alignedSet(measured) ?: measured
+    /** Designs the phase IRs on the measurements as taken. */
+    fun design(set: MeasurementSet): PhaseDesign {
         val o = set.options
         o.validate()
         val checks = Checks.run(set)
@@ -370,13 +337,9 @@ object Designer {
         if (positions.any { (it.combinedVsBranchSumRelativeError ?: 0.0) > 0.25 }) {
             warnings += "A combined sweep disagrees with its band sum; check timing, gain, routing and dynamics."
         }
-        if (used != null) {
-            warnings.add(0, "Designed for the Band Align changes: make them in J_DSP before loading these IRs, or the IRs are wrong for your tune.")
-        }
         val report = DesignReport(positions = positions, seats = seats, bands = bands, commonGainDb = commonGainDb.round(3),
-            latencyMs = o.latencyMs.round(2), jdspLatencyMs = o.jdspLatencyMs.round(2), warnings = warnings,
-            jdspSettingChanges = used?.changes?.map(JdspSettingChange::of).orEmpty())
-        return PhaseDesign(o, set, phase, responses, impulses, commonGainDb, report, used)
+            latencyMs = o.latencyMs.round(2), jdspLatencyMs = o.jdspLatencyMs.round(2), warnings = warnings)
+        return PhaseDesign(o, set, phase, responses, impulses, commonGainDb, report)
     }
 
     internal fun maxGroupDelayMs(phase: DoubleArray, f: DoubleArray): Double {

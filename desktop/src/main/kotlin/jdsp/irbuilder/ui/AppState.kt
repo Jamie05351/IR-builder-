@@ -57,7 +57,10 @@ data class Defaults(
     fun reference(c: Channel) = if (c == Channel.L) referenceL else referenceR
 }
 
-class AppState(private val scope: CoroutineScope) {
+class AppState(private var scope: CoroutineScope) {
+    /** Tests only: run later background work in another scope. */
+    internal fun rescope(s: CoroutineScope) { scope = s }
+
     /** The tool chosen on the start screen; null shows the start screen. */
     var tool by mutableStateOf<Tool?>(null)
     var step by mutableStateOf(Step.MEASUREMENTS)
@@ -196,6 +199,20 @@ class AppState(private val scope: CoroutineScope) {
         return s to (checks?.takeIf { s === set } ?: Checks.run(s))
     }
 
+    /**
+     * Installs a freshly loaded set. Results computed from a different load (e.g. files re-exported
+     * under the same names) are dropped, so nothing shown or exported comes from old data.
+     */
+    private fun publish(s: MeasurementSet, c: CheckResult) {
+        if (s !== set) {
+            alignment = null
+            design = null
+            exportedZip = null
+        }
+        set = s
+        checks = c
+    }
+
     fun runAlign() = background("Searching delays and polarities…") {
         val snapshot = measurements.toList()
         val o = options
@@ -208,8 +225,7 @@ class AppState(private val scope: CoroutineScope) {
             status = "Inputs changed while aligning; run Band Align again."
             return@background
         }
-        set = s
-        checks = c
+        publish(s, c)
         alignment = r
         if (r == null) {
             status = "Band Align blocked: ${c.errors} error(s) on the Checks page."
@@ -230,8 +246,7 @@ class AppState(private val scope: CoroutineScope) {
             status = "Inputs changed while checking; run the checks again."
             return@background
         }
-        set = s
-        checks = c
+        publish(s, c)
         status = "Checks: ${c.errors} error(s), ${c.warnings} warning(s)."
         then?.invoke()
     }
@@ -249,8 +264,7 @@ class AppState(private val scope: CoroutineScope) {
             status = "Inputs changed while calculating; result discarded. Calculate again."
             return@background
         }
-        set = s
-        checks = c
+        publish(s, c)
         design = d
         exportedZip = null
         if (d == null) {

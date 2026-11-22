@@ -58,10 +58,6 @@ object Exporter {
             put("measurement_topology", "software-band-solo; all physical speakers connected; shared stereo plant")
             put("routing_assumption", "diagonal stereo; mono bass and cross-channel mixing disabled")
             put("generator", GENERATOR)
-            // Informational (J_DSP's importer ignores unknown keys): Band Align changes the IRs need.
-            if (d.report.jdspSettingChanges.isNotEmpty()) {
-                put("jdsp_setting_changes", json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(JdspSettingChange.serializer()), d.report.jdspSettingChanges))
-            }
         }
     }
 
@@ -77,7 +73,7 @@ object Exporter {
             These IRs only change each band's phase near the crossovers so the software bands sum
             coherently at both seats. They do not change band magnitude, and contain no crossover.
 
-            @@BAND_ALIGN@@Loading in J_DSP
+            Loading in J_DSP
             1. Convolver page: import this ZIP and check the Low, Mid and High slots all load.
             2. Select Per-band mode. Set band-mode gain to 0 dB to match the prediction.
             3. Keep the measured baseline exactly: Low/Mid ${"%.1f".format(o.lowMidHz)} Hz, Mid/High ${"%.1f".format(o.midHighHz)} Hz,
@@ -89,18 +85,7 @@ object Exporter {
             7. Re-measure both seats with the IRs active. The report's numbers are predictions.
 
             Summed level may rise near the crossovers where cancellation is removed; re-check the PEQ.
-        """.trimIndent().replace("@@BAND_ALIGN@@", bandAlignSection(d)) + "\n"
-    }
-
-    private fun bandAlignSection(d: PhaseDesign): String {
-        val changes = d.report.jdspSettingChanges
-        if (changes.isEmpty()) return ""
-        return buildString {
-            append("FIRST: Band Align changes (Alignment > DELAY page)\n")
-            append("These IRs were designed for these J_DSP settings. Make them before loading the IRs:\n")
-            changes.forEach { append("  - ").append(it.text).append('\n') }
-            append("\n")
-        }
+        """.trimIndent() + "\n"
     }
 
     /** Writes the loose files and the ZIP into [directory]. Returns the ZIP. */
