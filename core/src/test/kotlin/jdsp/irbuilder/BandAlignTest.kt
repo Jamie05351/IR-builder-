@@ -304,3 +304,37 @@ class PerPairAndCombinedCoverageTest {
         assertTrue(d.report.warnings.none { it.contains("combined sweep disagrees") })
     }
 }
+
+class CoverageInUseTest {
+    @Test
+    fun midOnlyNeedsTheCrossoversInUse() {
+        val o = DesignOptions()
+        assertEquals(75.0, requiredCoverageHz(Band.MID, o).start, 1e-9)
+        assertEquals(7000.0, requiredCoverageHz(Band.MID, o).endInclusive, 1e-9)
+        // Low/Mid only: Mid needn't reach above 300 Hz.
+        val lm = requiredCoverageHz(Band.MID, o, setOf(Crossover.LOW_MID))
+        assertEquals(75.0, lm.start, 1e-9); assertEquals(300.0, lm.endInclusive, 1e-9)
+        // Mid/High only: Mid needn't reach below 1750 Hz.
+        val mh = requiredCoverageHz(Band.MID, o, setOf(Crossover.MID_HIGH))
+        assertEquals(1750.0, mh.start, 1e-9); assertEquals(7000.0, mh.endInclusive, 1e-9)
+    }
+
+    @Test
+    fun aLowMidRunAcceptsAMidSweepThatStopsAt1kHz() {
+        val dir = kotlin.io.path.createTempDirectory("irb").toFile()
+        val ms = ArrayList<Measurement>()
+        for (seat in Seat.entries) for (ch in Channel.entries) for ((b, hi) in listOf(Band.LOW to 500.0, Band.MID to 1000.0)) {
+            val file = java.io.File(dir, "${seat.name}_c_${ch.name}_${b.fileName}.txt")
+            Fixtures.writeRew(file, { f -> Fixtures.band(b, f, delaySeconds = if (b == Band.LOW) 0.0015 else 0.0) }, minHz = 15.0, maxHz = hi)
+            ms += Measurement(file.path, seat, "c", ch, b, if (ch == Channel.L) "R" else "L")
+        }
+        val a = AlignOptions(JdspTiming(BandSetting(2.0), BandSetting(2.0)), lowMid = true, midHigh = false)
+        val scope = CheckScope.bandAlign(a)
+        val set = MeasurementSet.load(ms, DesignOptions(), scope.crossovers.toSet())
+        assertTrue(set.loadErrors.isEmpty(), set.loadErrors.joinToString { it.message })
+        assertTrue(Checks.run(set, scope).canDesign)
+        assertTrue(BandAlign.solve(set, a).results.all { it.proposal != null })
+        // The same Mid sweep is refused when the Mid/High crossover is in use.
+        assertTrue(MeasurementSet.load(ms, DesignOptions()).loadErrors.any { it.measurement.band == Band.MID })
+    }
+}

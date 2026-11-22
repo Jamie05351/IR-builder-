@@ -38,6 +38,8 @@ class MeasurementSet(
     val groups: List<LoadedGroup>,
     val loadErrors: List<LoadError>,
     val measurements: List<Measurement>,
+    /** The crossovers the sweeps were required to cover (see [requiredCoverageHz]). */
+    val crossovers: Set<Crossover> = Crossover.entries.toSet(),
 ) {
     fun group(key: GroupKey) = groups.firstOrNull { it.key == key }
 
@@ -47,14 +49,14 @@ class MeasurementSet(
         fun grid(o: DesignOptions) = geomspace(o.analysisMinHz, o.analysisMaxHz, GRID_POINTS)
 
         /** Reads every file. Unreadable files are reported, not thrown, so the checks page can list them. */
-        fun load(measurements: List<Measurement>, o: DesignOptions): MeasurementSet {
+        fun load(measurements: List<Measurement>, o: DesignOptions, crossovers: Set<Crossover> = Crossover.entries.toSet()): MeasurementSet {
             val freqs = grid(o)
             val errors = ArrayList<LoadError>()
             val loaded = LinkedHashMap<GroupKey, MutableMap<Band, Pair<Measurement, LoadedResponse>>>()
             for (m in measurements) {
                 val key = GroupKey(m.seat, m.position.trim(), m.channel)
                 val r = try {
-                    Importer.read(m, freqs, o.sampleRate, o.measurementSmoothing, requiredCoverageHz(m.band, o))
+                    Importer.read(m, freqs, o.sampleRate, o.measurementSmoothing, requiredCoverageHz(m.band, o, crossovers))
                 } catch (e: Exception) {
                     errors += LoadError(m, e.message ?: e.toString())
                     continue
@@ -74,7 +76,7 @@ class MeasurementSet(
                     measurements = bands.mapValues { it.value.first },
                 )
             }.sortedBy { it.key }
-            return MeasurementSet(o, freqs, groups, errors, measurements)
+            return MeasurementSet(o, freqs, groups, errors, measurements, crossovers)
         }
 
         fun fileName(m: Measurement) = File(m.path).name

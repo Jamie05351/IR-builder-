@@ -198,7 +198,8 @@ class AppState(private var scope: CoroutineScope) {
 
     /** The loaded set and its checks, reusing what's current. */
     private fun loadAndCheck(snapshot: List<Measurement>, o: DesignOptions, scope: CheckScope = checkScope()): Pair<MeasurementSet, CheckResult> {
-        val s = set?.takeIf { it.options == o && it.measurements == snapshot } ?: MeasurementSet.load(snapshot, o)
+        val xo = scope.crossovers.toSet()
+        val s = set?.takeIf { it.options == o && it.measurements == snapshot && it.crossovers == xo } ?: MeasurementSet.load(snapshot, o, xo)
         // The checks are cheap next to reading files; always run them for the current tool's scope.
         return s to Checks.run(s, scope)
     }
@@ -247,7 +248,7 @@ class AppState(private var scope: CoroutineScope) {
         val scope = checkScope()
         val o = options
         val (s, c) = withContext(Dispatchers.Default) {
-            val s = MeasurementSet.load(snapshot, o)
+            val s = MeasurementSet.load(snapshot, o, scope.crossovers.toSet())
             s to Checks.run(s, scope)
         }
         if (inputsChangedSince(snapshot, o)) {

@@ -146,15 +146,18 @@ data class DesignOptions(
 internal fun pow2(x: Double) = Math.pow(2.0, x)
 
 /**
- * The frequency span each band's sweep must cover: an octave either side of its own crossovers
- * (as J_DSP's Band Align asks of Mid), with Low reaching two octaves below Low/Mid and High two
- * above Mid/High. Outside its sweep a band is taken as silent, which it is that far out of band.
- * Held within the analysis range.
+ * The frequency span each band's sweep must cover: an octave either side of the crossovers in
+ * use (as J_DSP's Band Align asks of Mid), with Low reaching two octaves below Low/Mid and High
+ * two above Mid/High. Only the crossovers in [inUse] count, so a Low/Mid-only run doesn't ask Mid
+ * to reach above the Mid/High crossover. Outside its sweep a band is taken as silent, which it is
+ * that far out of band. Held within the analysis range.
  */
-fun requiredCoverageHz(band: Band, o: DesignOptions): ClosedFloatingPointRange<Double> {
+fun requiredCoverageHz(band: Band, o: DesignOptions, inUse: Set<Crossover> = Crossover.entries.toSet()): ClosedFloatingPointRange<Double> {
+    val lowMid = Crossover.LOW_MID in inUse
+    val midHigh = Crossover.MID_HIGH in inUse
     val r = when (band) {
         Band.LOW -> o.lowMidHz / 4..o.lowMidHz * 2
-        Band.MID, Band.COMBINED -> o.lowMidHz / 2..o.midHighHz * 2
+        Band.MID, Band.COMBINED -> (if (lowMid || !midHigh) o.lowMidHz / 2 else o.midHighHz / 2)..(if (midHigh || !lowMid) o.midHighHz * 2 else o.lowMidHz * 2)
         Band.HIGH -> o.midHighHz / 2..o.midHighHz * 4
     }
     return maxOf(r.start, o.analysisMinHz)..minOf(r.endInclusive, o.analysisMaxHz)
