@@ -126,3 +126,31 @@ class CombinedOnlyChecksTest {
         assertTrue(r.items.single().title.contains("Stereo"), r.items.joinToString { it.title })
     }
 }
+
+class ArrivalEstimateTest {
+    /**
+     * A car-like full-range response: the direct sound 3 ms late, a bass region 20 dB louder with
+     * a sharp mode (a long group delay there), and some reflections. Weighting by energy put the
+     * arrival in the bass, many ms late; it must be read from the direct sound.
+     */
+    @Test
+    fun loudSlowBassDoesNotSetTheArrivalTime() {
+        val f = geomspace(30.0, 16000.0, 768)
+        val h = CVec(f.size)
+        for (i in f.indices) {
+            val w = f[i]
+            // Bass: +20 dB below ~120 Hz, with a Q 6 mode at 55 Hz.
+            val s = Fixtures.C(0.0, w / 55.0)
+            val mode = Fixtures.C(1.0, 0.0) / (s * s + s.scale(1 / 6.0) + Fixtures.C(1.0, 0.0))
+            val shelf = Fixtures.C(1.0, 0.0) / (Fixtures.C(1.0, w / 120.0))
+            val body = Fixtures.C(1.0, 0.0) + (shelf * shelf).scale(9.0) + mode.scale(3.0)
+            fun late(t: Double) = Fixtures.C(kotlin.math.cos(-2 * Math.PI * w * t), kotlin.math.sin(-2 * Math.PI * w * t))
+            val x = (body * late(0.003)) + late(0.0042).scale(0.5) + late(0.0061).scale(0.3)
+            h.re[i] = x.re; h.im[i] = x.im
+        }
+        val tau = Importer.bulkDelaySeconds(h, f)
+        assertEquals(0.003, tau, 0.0004, "arrival ${tau * 1000} ms")
+        // With a hint some ms off, it still lands on the direct sound.
+        assertEquals(0.003, Importer.bulkDelaySeconds(h, f, -0.004), 0.0004)
+    }
+}
