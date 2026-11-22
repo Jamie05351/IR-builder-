@@ -132,7 +132,8 @@ object BandAlign {
         var working = align.timing
         for (pair in pairs) {
             for (ch in Channel.entries) {
-                val groups = set.groups.filter { it.key.channel == ch && it.isComplete }
+                // Only the two bands of the pair are needed; any other band missing reads as silent.
+                val groups = set.groups.filter { it.key.channel == ch && it.has(listOf(pair.moving, Band.MID)) }
                 if (groups.none { !it.validationOnly }) continue
                 val r = solvePair(set, groups, pair, ch, align.timing, working, o)
                 results += r

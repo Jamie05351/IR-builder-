@@ -176,3 +176,87 @@ class ToolSeparationTest {
         assertFalse(Exporter.manifest(d).containsKey("jdsp_setting_changes"))
     }
 }
+
+class BandLimitedAndPartialSetsTest {
+    private fun bandLimited(
+        dir: java.io.File,
+        bands: List<Band> = Band.BRANCHES,
+        seats: List<Seat> = Seat.entries,
+        channels: List<Channel> = Channel.entries,
+        ranges: Map<Band, Pair<Double, Double>> = mapOf(Band.LOW to (10.0 to 400.0), Band.MID to (70.0 to 8000.0), Band.HIGH to (1700.0 to 22000.0)),
+        lowLateS: Double = 0.0,
+    ): List<Measurement> {
+        val out = ArrayList<Measurement>()
+        for (seat in seats) for (ch in channels) for (b in bands) {
+            val file = java.io.File(dir, "${seat.name}_c_${ch.name}_${b.fileName}.txt")
+            val (lo, hi) = ranges.getValue(b)
+            Fixtures.writeRew(file, { f -> Fixtures.band(b, f, delaySeconds = if (b == Band.LOW) lowLateS else 0.0) }, minHz = lo, maxHz = hi)
+            out += Measurement(file.path, seat, "c", ch, b, if (ch == Channel.L) "R" else "L")
+        }
+        return out
+    }
+
+    @Test
+    fun bandLimitedSweepsAreAcceptedAndSilentOutsideTheirRange() {
+        val dir = kotlin.io.path.createTempDirectory("irb").toFile()
+        val set = MeasurementSet.load(bandLimited(dir), DesignOptions())
+        assertTrue(set.loadErrors.isEmpty(), set.loadErrors.joinToString { it.message })
+        val c = Checks.run(set)
+        assertTrue(c.canDesign, c.items.filter { it.severity == Severity.ERROR }.joinToString { it.title })
+        val g = set.groups.first()
+        val hi = g.branch(Band.HIGH)
+        val i150 = set.freqs.indexOfFirst { it >= 150.0 }
+        assertEquals(0.0, hi.abs(i150), 0.0)   // High wasn't swept down there.
+        assertTrue(g.branch(Band.LOW).abs(i150) > 0)
+        // The Phase IR design still works on band-limited sweeps.
+        Designer.design(MeasurementSet.load(bandLimited(dir), DesignOptions(taps = 8192, latencyFrames = 4096)))
+    }
+
+    @Test
+    fun aSweepThatStopsShortOfItsCrossoverRegionIsRefusedWithTheRangeItNeeds() {
+        val dir = kotlin.io.path.createTempDirectory("irb").toFile()
+        val ms = bandLimited(dir, ranges = mapOf(Band.LOW to (10.0 to 400.0), Band.MID to (120.0 to 8000.0), Band.HIGH to (1700.0 to 22000.0)))
+        val set = MeasurementSet.load(ms, DesignOptions())
+        val e = set.loadErrors.first { it.measurement.band == Band.MID }
+        assertTrue(e.message.contains("75") && e.message.contains("7000"), e.message)
+    }
+
+    @Test
+    fun bandAlignLowMidNeedsNoHighSweeps() {
+        val dir = kotlin.io.path.createTempDirectory("irb").toFile()
+        val ms = bandLimited(dir, bands = listOf(Band.LOW, Band.MID), lowLateS = 0.0015)
+        val set = MeasurementSet.load(ms, DesignOptions())
+        val a = AlignOptions(JdspTiming(BandSetting(2.0), BandSetting(2.0)), lowMid = true, midHigh = false)
+        val c = Checks.run(set, CheckScope.bandAlign(a))
+        assertTrue(c.canDesign, c.items.filter { it.severity == Severity.ERROR }.joinToString { it.title })
+        val r = BandAlign.solve(set, a)
+        assertTrue(r.results.all { it.pair == AlignPair.LOW_MID } && r.results.size == 2)
+        assertTrue(r.results.all { it.proposal != null })
+        // The Phase IRs still insist on all three bands.
+        assertFalse(Checks.run(set).canDesign)
+    }
+
+    @Test
+    fun bandAlignRunsOnOneSeatOrOneSideWithAWarning() {
+        val dir = kotlin.io.path.createTempDirectory("irb").toFile()
+        val ms = bandLimited(dir, seats = listOf(Seat.DRIVER), channels = listOf(Channel.L), lowLateS = 0.0015)
+        val set = MeasurementSet.load(ms, DesignOptions())
+        val a = AlignOptions(JdspTiming(BandSetting(2.0), BandSetting(2.0)))
+        val c = Checks.run(set, CheckScope.bandAlign(a))
+        assertTrue(c.canDesign)
+        assertTrue(c.items.any { it.severity == Severity.WARNING && it.title.contains("Right side not aligned") })
+        assertTrue(c.items.any { it.severity == Severity.WARNING && it.title.contains("Driver seat only") })
+        val r = BandAlign.solve(set, a)
+        assertTrue(r.results.all { it.channel == Channel.L })
+        assertNotNull(r.results.first { it.pair == AlignPair.LOW_MID }.proposal)
+    }
+
+    @Test
+    fun bandAlignWithNothingUsableIsAnError() {
+        val dir = kotlin.io.path.createTempDirectory("irb").toFile()
+        val ms = bandLimited(dir, bands = listOf(Band.MID))
+        val c = Checks.run(MeasurementSet.load(ms, DesignOptions()), CheckScope.bandAlign(AlignOptions()))
+        assertFalse(c.canDesign)
+        assertTrue(c.items.any { it.title == "Nothing to align" })
+    }
+}

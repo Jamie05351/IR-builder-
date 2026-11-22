@@ -9,12 +9,16 @@ class LoadedGroup(
     val responses: Map<Band, LoadedResponse>,
     val measurements: Map<Band, Measurement>,
 ) {
-    val isComplete get() = Band.BRANCHES.all { it in responses }
-    fun branch(b: Band): CVec = responses.getValue(b).response
+    val isComplete get() = has(Band.BRANCHES)
+    fun has(bands: Collection<Band>) = bands.all { it in responses }
+    private val size get() = responses.values.first().response.size
 
-    /** Complex sum of the three measured branches: the baseline the designer corrects. */
+    /** A band's response; a band that wasn't measured reads as silent. */
+    fun branch(b: Band): CVec = responses[b]?.response ?: CVec(size)
+
+    /** Complex sum of the measured branches: the baseline the designer corrects. */
     fun branchSum(): CVec {
-        val n = branch(Band.LOW).size
+        val n = size
         val out = CVec(n)
         for (b in Band.BRANCHES) {
             val h = branch(b)
@@ -50,7 +54,7 @@ class MeasurementSet(
             for (m in measurements) {
                 val key = GroupKey(m.seat, m.position.trim(), m.channel)
                 val r = try {
-                    Importer.read(m, freqs, o.sampleRate, o.measurementSmoothing)
+                    Importer.read(m, freqs, o.sampleRate, o.measurementSmoothing, requiredCoverageHz(m.band, o))
                 } catch (e: Exception) {
                     errors += LoadError(m, e.message ?: e.toString())
                     continue

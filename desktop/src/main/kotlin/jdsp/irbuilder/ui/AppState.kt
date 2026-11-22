@@ -10,6 +10,7 @@ import jdsp.irbuilder.BandAlign
 import jdsp.irbuilder.BandAlignReport
 import jdsp.irbuilder.Channel
 import jdsp.irbuilder.CheckResult
+import jdsp.irbuilder.CheckScope
 import jdsp.irbuilder.Checks
 import jdsp.irbuilder.DesignOptions
 import jdsp.irbuilder.Designer
@@ -105,6 +106,8 @@ class AppState(private var scope: CoroutineScope) {
 
     /** Band Align inputs changed: its result goes, the checks stay valid. */
     fun updateAlign(a: AlignOptions) {
+        // Which bands Band Align needs depends on its pairs, so its checks must be re-run.
+        if (a.lowMid != align.lowMid || a.midHigh != align.midHigh) checks = null
         align = a
         alignError = runCatching { a.timing.validate() }.exceptionOrNull()?.message
         alignment = null
@@ -194,10 +197,14 @@ class AppState(private var scope: CoroutineScope) {
         measurements.toList() != snapshot || options != o || align != a
 
     /** The loaded set and its checks, reusing what's current. */
-    private fun loadAndCheck(snapshot: List<Measurement>, o: DesignOptions): Pair<MeasurementSet, CheckResult> {
+    private fun loadAndCheck(snapshot: List<Measurement>, o: DesignOptions, scope: CheckScope = checkScope()): Pair<MeasurementSet, CheckResult> {
         val s = set?.takeIf { it.options == o && it.measurements == snapshot } ?: MeasurementSet.load(snapshot, o)
-        return s to (checks?.takeIf { s === set } ?: Checks.run(s))
+        // The checks are cheap next to reading files; always run them for the current tool's scope.
+        return s to Checks.run(s, scope)
     }
+
+    /** What the current tool requires of the measurements. */
+    fun checkScope(): CheckScope = if (tool == Tool.BAND_ALIGN) CheckScope.bandAlign(align) else CheckScope.PHASE_IRS
 
     /**
      * Installs a freshly loaded set. Results computed from a different load (e.g. files re-exported
@@ -218,7 +225,7 @@ class AppState(private var scope: CoroutineScope) {
         val o = options
         val a = align
         val (s, c, r) = withContext(Dispatchers.Default) {
-            val (s, c) = loadAndCheck(snapshot, o)
+            val (s, c) = loadAndCheck(snapshot, o, CheckScope.bandAlign(a))
             Triple(s, c, if (c.canDesign) BandAlign.solve(s, a) else null)
         }
         if (inputsChangedSince(snapshot, o, a)) {
@@ -237,10 +244,11 @@ class AppState(private var scope: CoroutineScope) {
 
     fun runChecks(then: (() -> Unit)? = null) = background("Reading measurements and running checks…") {
         val snapshot = measurements.toList()
+        val scope = checkScope()
         val o = options
         val (s, c) = withContext(Dispatchers.Default) {
             val s = MeasurementSet.load(snapshot, o)
-            s to Checks.run(s)
+            s to Checks.run(s, scope)
         }
         if (inputsChangedSince(snapshot, o)) {
             status = "Inputs changed while checking; run the checks again."
@@ -255,7 +263,7 @@ class AppState(private var scope: CoroutineScope) {
         val snapshot = measurements.toList()
         val o = options
         val (s, c, d) = withContext(Dispatchers.Default) {
-            val (s, c) = loadAndCheck(snapshot, o)
+            val (s, c) = loadAndCheck(snapshot, o, CheckScope.PHASE_IRS)
             // The phase IRs are designed on the measurements as taken: Band Align is a separate
             // tool, applied in J_DSP and re-measured before designing IRs.
             Triple(s, c, if (c.canDesign) Designer.design(s) else null)

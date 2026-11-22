@@ -146,7 +146,10 @@ private fun CompletenessPanel(state: AppState) {
     val grid = Checks.completeness(state.measurements)
     if (grid.isEmpty()) return
     Panel("Completeness", accent = Jdsp.MGreen) {
-        Note("Each seat · position needs Low, Mid and High for both channels. Combined is optional (validates the band sum).")
+        Note(
+            if (state.tool == jdsp.irbuilder.Tool.BAND_ALIGN) "Band Align needs the bands of the pairs switched on (Low + Mid, Mid + High). Missing seats or sides are skipped with a warning. Band-limited sweeps are fine if each band covers an octave either side of its crossovers."
+            else "Each seat · position needs Low, Mid and High for both channels. Combined is optional (validates the band sum). Band-limited sweeps are fine if each band covers an octave either side of its crossovers.",
+        )
         val rows = grid.keys.map { it.seat to it.position }.distinct().sortedWith(compareBy({ it.first }, { it.second }))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("", modifier = Modifier.width(200.dp))
@@ -160,7 +163,7 @@ private fun CompletenessPanel(state: AppState) {
                 Text("${seat.label} · $pos" + if (validation) "  (validation)" else "", color = Color.White, fontSize = 13.sp, modifier = Modifier.width(200.dp))
                 for (ch in Channel.entries) for (b in Band.entries) {
                     val have = grid[jdsp.irbuilder.GroupKey(seat, pos, ch)]?.contains(b) == true
-                    val required = b != Band.COMBINED
+                    val required = b in state.checkScope().requiredBands
                     val color = when {
                         have -> Jdsp.MGreen
                         required -> Jdsp.MRed

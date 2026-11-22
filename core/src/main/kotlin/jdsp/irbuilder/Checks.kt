@@ -39,6 +39,27 @@ class CheckResult(val items: List<CheckItem>, val crossoverPhases: List<Crossove
     val canDesign get() = errors == 0
 }
 
+/**
+ * What a check run requires, which depends on the tool. The Phase IRs need Low, Mid and High at
+ * both seats and both channels (the package covers all six outputs). Band Align needs only the
+ * bands of its enabled pairs, and a missing seat or side just means that one isn't aligned.
+ */
+data class CheckScope(val requiredBands: Set<Band>, val strict: Boolean, val purpose: String) {
+    val crossovers: List<Crossover> get() = Crossover.entries.filter { it.lower in requiredBands && it.upper in requiredBands }
+
+    companion object {
+        val PHASE_IRS = CheckScope(Band.BRANCHES.toSet(), strict = true, purpose = "the Phase IRs")
+
+        fun bandAlign(a: AlignOptions) = CheckScope(
+            buildSet {
+                if (a.lowMid) { add(Band.LOW); add(Band.MID) }
+                if (a.midHigh) { add(Band.MID); add(Band.HIGH) }
+            },
+            strict = false, purpose = "Band Align",
+        )
+    }
+}
+
 object Checks {
     /** Which bands each seat/position/channel has, straight from the list (no file reading). */
     fun completeness(measurements: List<Measurement>): Map<GroupKey, Set<Band>> =
@@ -46,7 +67,7 @@ object Checks {
             .mapValues { (_, ms) -> ms.map { it.band }.toSet() }
             .toSortedMap()
 
-    fun run(set: MeasurementSet): CheckResult {
+    fun run(set: MeasurementSet, scope: CheckScope = CheckScope.PHASE_IRS): CheckResult {
         val o = set.options
         val items = ArrayList<CheckItem>()
         fun err(t: String, d: String) { items += CheckItem(Severity.ERROR, t, d) }
@@ -57,7 +78,11 @@ object Checks {
         // they never block the Band Align tool, which can't reach them.
         try { o.validateMeasurement() } catch (e: IllegalArgumentException) { err("Measurement settings", e.message ?: "Invalid settings") }
         if (set.measurements.isEmpty()) {
-            err("No measurements", "Import software-band-solo sweeps for both seats and both channels.")
+            err("No measurements", "Import software-band-solo sweeps for ${scope.purpose}.")
+            return CheckResult(items, emptyList())
+        }
+        if (scope.requiredBands.isEmpty()) {
+            err("Nothing to align", "Switch on Low against Mid, High against Mid, or both.")
             return CheckResult(items, emptyList())
         }
         for (e in set.loadErrors) err("Cannot use ${MeasurementSet.fileName(e.measurement)}", e.message)
@@ -71,17 +96,36 @@ object Checks {
         }
 
         // Group completeness and consistency.
+        val needed = Band.BRANCHES.filter { it in scope.requiredBands }
         for ((key, ms) in set.measurements.groupBy { GroupKey(it.seat, it.position.trim(), it.channel) }) {
             val bands = ms.map { it.band }.toSet()
-            val missing = Band.BRANCHES.filter { it !in bands }
-            if (missing.isNotEmpty()) err("${key.label}: incomplete", "Missing ${missing.joinToString { it.label }} software-band-solo sweep(s).")
+            val missing = needed.filter { it !in bands }
+            if (missing.isNotEmpty()) {
+                val what = "Missing ${missing.joinToString { it.label }} software-band-solo sweep(s)"
+                if (scope.strict) err("${key.label}: incomplete", "$what.")
+                else warn("${key.label}: left out", "$what, so ${scope.purpose} doesn't use this position.")
+            }
             if (ms.map { it.validationOnly }.toSet().size > 1) err("${key.label}: mixed validation flag", "Mark all bands at a position validation-only, or none.")
             val cal = ms.filter { it.band != Band.COMBINED }.map { it.calibrationDb }.toSet()
             if (cal.size > 1) warn("${key.label}: calibration offsets differ", "Bands at one position normally share a calibration offset; different offsets change their relative level and the computed band sum.")
         }
-        for (seat in Seat.entries) for (ch in Channel.entries) {
-            if (set.groups.none { it.key.seat == seat && it.key.channel == ch && it.isComplete && !it.validationOnly }) {
-                err("No design data: ${seat.label} ${ch.label}", "Need at least one complete Low/Mid/High triplet that is not validation-only.")
+        fun usable(g: LoadedGroup) = g.has(needed) && !g.validationOnly
+        if (scope.strict) {
+            for (seat in Seat.entries) for (ch in Channel.entries) {
+                if (set.groups.none { it.key.seat == seat && it.key.channel == ch && usable(it) }) {
+                    err("No design data: ${seat.label} ${ch.label}", "Need at least one complete Low/Mid/High triplet that is not validation-only.")
+                }
+            }
+        } else {
+            val bandList = needed.joinToString("/") { it.label }
+            if (set.groups.none(::usable)) {
+                err("Nothing to align", "No position has $bandList sweeps that aren't validation-only.")
+            } else for (ch in Channel.entries) {
+                val seats = Seat.entries.filter { st -> set.groups.any { it.key.seat == st && it.key.channel == ch && usable(it) } }
+                when {
+                    seats.isEmpty() -> warn("${ch.label} side not aligned", "No $bandList sweeps for the ${ch.label.lowercase()} side.")
+                    seats.size == 1 -> warn("${ch.label} side: ${seats.single().label} seat only", "The other seat has no $bandList sweeps, so it isn't checked for getting worse.")
+                }
             }
         }
 
@@ -95,24 +139,27 @@ object Checks {
                 val p = r.impulsePeakIndex
                 if (p != null && p < 2) warn("${g.key.label} ${band.label}: impulse peak at sample $p", "The WAV may have been trimmed to its own peak, losing the shared time origin. Export impulses with the timing-reference offset preserved.")
             }
-            if (!g.isComplete) continue
             // Bands should sit in frequency order; otherwise the tags are probably swapped.
-            val centroids = Band.BRANCHES.map { energyCentroidHz(g.branch(it), freqs) }
-            if (!(centroids[0] < centroids[1] && centroids[1] < centroids[2])) {
-                warn("${g.key.label}: band order looks wrong", "Energy centres: Low %.0f Hz, Mid %.0f Hz, High %.0f Hz. Check the band tags.".format(centroids[0], centroids[1], centroids[2]))
+            val present = Band.BRANCHES.filter { it in g.responses }
+            val centroids = present.map { energyCentroidHz(g.branch(it), freqs) }
+            if (present.size >= 2 && centroids.zipWithNext().any { (a, b) -> a >= b }) {
+                warn("${g.key.label}: band order looks wrong", "Energy centres: " + present.zip(centroids).joinToString { (b, c) -> "${b.label} %.0f Hz".format(c) } + ". Check the band tags.")
             }
             for (xo in Crossover.entries) {
+                if (xo.lower !in g.responses || xo.upper !in g.responses) continue
                 val hz = xo.hz(o)
                 val a = levelNear(g.branch(xo.lower), freqs, hz)
                 val b = levelNear(g.branch(xo.upper), freqs, hz)
                 if (abs(a - b) > 15) warn("${g.key.label}: ${xo.label} levels far apart", "${xo.lower.label} %.1f dB vs ${xo.upper.label} %.1f dB at %.0f Hz. Check the crossover frequency you entered, band tags, gains or mutes.".format(a, b, hz))
             }
-            g.responses[Band.COMBINED]?.let { combined ->
+            // A Combined sweep plays every band, so it can only be checked against all three.
+            if (g.isComplete) g.responses[Band.COMBINED]?.let { combined ->
                 val sum = g.branchSum()
                 val c = combined.response
                 var num = 0.0
                 var den = 0.0
                 for (i in freqs.indices) {
+                    if (freqs[i] !in combined.coverageHz) continue
                     num += (c.re[i] - sum.re[i]).let { it * it } + (c.im[i] - sum.im[i]).let { it * it }
                     den += c.re[i] * c.re[i] + c.im[i] * c.im[i]
                 }
@@ -122,11 +169,28 @@ object Checks {
             }
         }
 
+        // Export smoothing from REW stacks with the app's own measurement smoothing, and files
+        // smoothed differently don't match each other.
+        val rewSmoothing = set.groups.flatMap { it.responses.values }.filter { it.kind == SourceKind.REW_TEXT }
+        val labels = rewSmoothing.groupingBy { it.smoothing?.trim()?.lowercase() ?: "not stated" }.eachCount()
+        if (labels.size > 1) {
+            warn("Files were exported with different smoothing", labels.entries.joinToString { "${it.key}: ${it.value}" } +
+                ". Bands smoothed differently don't line up exactly. Re-export them all the same way, ideally 1/48 octave or none.")
+        }
+        val app = o.measurementSmoothing
+        if (app > 0) {
+            rewSmoothing.mapNotNull { it.presmoothingOctaveDenominator }.filter { it <= 24 }.groupingBy { it }.eachCount().forEach { (n, count) ->
+                val total = 1 / kotlin.math.sqrt(1.0 / (n * n) + 1.0 / (app * app))
+                warn("$count file(s) already smoothed 1/$n octave in REW",
+                    "The app adds its own 1/$app on top, about 1/%.0f octave in total. Export from REW at 1/48 octave or no smoothing, or set the app's smoothing to None.".format(total))
+            }
+        }
+
         if (combinedOk.isNotEmpty()) info("Combined sweeps match the band sum", "${combinedOk.size} position/channel(s); worst relative complex error %.2f.".format(combinedOk.max()))
 
         // Positions far from their seat's typical level suggest a gain change or a moved mic.
         for (seat in Seat.entries) for (ch in Channel.entries) {
-            val gs = set.groups.filter { it.key.seat == seat && it.key.channel == ch && it.isComplete }
+            val gs = set.groups.filter { it.key.seat == seat && it.key.channel == ch && it.has(needed) }
             if (gs.size < 3) continue
             val curves = gs.map { g -> g.branchSum().let { s -> DoubleArray(freqs.size) { db(s.abs(it)) } } }
             val median = DoubleArray(freqs.size) { i -> curves.map { it[i] }.sorted()[curves.size / 2] }
@@ -138,9 +202,9 @@ object Checks {
 
         // Phase consistency: one shared filter can only help if positions agree on the band offset.
         val phases = ArrayList<CrossoverPhase>()
-        for (ch in Channel.entries) for (xo in Crossover.entries) {
+        for (ch in Channel.entries) for (xo in scope.crossovers) {
             val bySeat = Seat.entries.mapNotNull { seat ->
-                val gs = set.groups.filter { it.key.seat == seat && it.key.channel == ch && it.isComplete && !it.validationOnly }
+                val gs = set.groups.filter { it.key.seat == seat && it.key.channel == ch && it.has(listOf(xo.lower, xo.upper)) && !it.validationOnly }
                 if (gs.isEmpty()) return@mapNotNull null
                 val angles = gs.map { relativePhase(it.branch(xo.lower), it.branch(xo.upper), freqs, xo.hz(o)) }
                 val (mean, spread) = circularStats(angles)
@@ -157,9 +221,9 @@ object Checks {
             }
         }
 
-        val design = set.groups.count { it.isComplete && !it.validationOnly }
-        val held = set.groups.count { it.isComplete && it.validationOnly }
-        info("Measurement set", "$design design position/channel triplet(s), $held validation-only, ${set.measurements.size} file(s). Analysis range %.0f–%.0f Hz.".format(freqs.first(), freqs.last()))
+        val design = set.groups.count { it.has(needed) && !it.validationOnly }
+        val held = set.groups.count { it.has(needed) && it.validationOnly }
+        info("Measurement set", "$design usable position/channel set(s) for ${scope.purpose}, $held validation-only, ${set.measurements.size} file(s). Analysis range %.0f–%.0f Hz.".format(freqs.first(), freqs.last()))
         return CheckResult(items.sortedBy { it.severity.ordinal }, phases)
     }
 
