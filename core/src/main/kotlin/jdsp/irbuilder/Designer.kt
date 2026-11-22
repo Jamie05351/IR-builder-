@@ -145,6 +145,7 @@ class SeatCurves(val beforeDb: DoubleArray, val afterDb: DoubleArray, val cohere
 object Designer {
     private const val SWEEPS = 200
 
+    /** Designs the phase IRs on the measurements as taken. */
     fun design(set: MeasurementSet): PhaseDesign {
         val o = set.options
         o.validate()

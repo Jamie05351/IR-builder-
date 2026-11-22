@@ -53,7 +53,9 @@ object Checks {
         fun warn(t: String, d: String) { items += CheckItem(Severity.WARNING, t, d) }
         fun info(t: String, d: String) { items += CheckItem(Severity.INFO, t, d) }
 
-        try { o.validate() } catch (e: IllegalArgumentException) { err("Design settings", e.message ?: "Invalid settings") }
+        // Only what reading needs: the IR filter settings are the Phase IR design's to check, so
+        // they never block the Band Align tool, which can't reach them.
+        try { o.validateMeasurement() } catch (e: IllegalArgumentException) { err("Measurement settings", e.message ?: "Invalid settings") }
         if (set.measurements.isEmpty()) {
             err("No measurements", "Import software-band-solo sweeps for both seats and both channels.")
             return CheckResult(items, emptyList())
@@ -89,6 +91,7 @@ object Checks {
             val kinds = g.responses.values.map { it.kind }.toSet()
             if (kinds.size > 1) warn("${g.key.label}: mixed file types", "REW text and impulse WAVs at the same position must share one calibration and time origin.")
             for ((band, r) in g.responses) {
+                if (r.heavilySmoothed) warn("${g.key.label} ${band.label}: smoothed too coarsely (${r.smoothing})", "Phase smoothed coarser than 1/12 octave can't be summed reliably. Re-export from REW with 1/48 octave or no smoothing.")
                 val p = r.impulsePeakIndex
                 if (p != null && p < 2) warn("${g.key.label} ${band.label}: impulse peak at sample $p", "The WAV may have been trimmed to its own peak, losing the shared time origin. Export impulses with the timing-reference offset preserved.")
             }

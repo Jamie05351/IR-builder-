@@ -82,7 +82,7 @@ class ImportTest {
         val dir = createTempDirectory("irb").toFile()
         val file = File(dir, "u.txt")
         val delay = 0.02
-        file.writeText((0 until 400).joinToString("\n") { i ->
+        file.writeText(REW_HEADER + (0 until 400).joinToString("\n") { i ->
             val f = 20.0 * Math.pow(1000.0, i / 399.0)
             "$f 80 ${-360 * f * delay}"
         })
@@ -95,13 +95,75 @@ class ImportTest {
     fun rewZeroHertzRowIsSkipped() {
         val dir = createTempDirectory("irb").toFile()
         val file = File(dir, "z.txt")
-        file.writeText("0.000 -50 0\n" + (1..2000).joinToString("\n") { "${it * 10.0} 80 0" })
+        file.writeText(REW_HEADER + "0.000 -50 0\n" + (1..2000).joinToString("\n") { "${it * 10.0} 80 0" })
         val freqs = geomspace(50.0, 15000.0, 64)
         val r = Importer.read(Measurement(file.path, Seat.DRIVER, "c", Channel.L, Band.LOW, "r"), freqs, 48000)
         for (i in freqs.indices) assertEquals(1e4, r.response.abs(i), 1e-6)
     }
 
+    @Test
+    fun rewHeaderDelayIsPutBack() {
+        // REW removed 4.4 ms (note "Delay -4.4 ms" style) from one band and 0.3 ms from another;
+        // both must come back to the same absolute timing.
+        val dir = createTempDirectory("irb").toFile()
+        val freqs = geomspace(50.0, 15000.0, 128)
+        for (removed in listOf(-4.4223, 0.3, 0.0)) {
+            val file = File(dir, "d$removed.txt")
+            Fixtures.writeRew(file, { f -> Fixtures.band(Band.MID, f) }, removedDelayMs = removed)
+            val r = Importer.read(Measurement(file.path, Seat.DRIVER, "c", Channel.L, Band.MID, "r"), freqs, 48000)
+            assertEquals(removed, r.restoredDelayMs, 1e-9)
+            for (i in freqs.indices) {
+                val expected = Fixtures.band(Band.MID, freqs[i])
+                assertEquals(0.0, wrap(r.response.arg(i) - kotlin.math.atan2(expected.im, expected.re)), 2e-3)
+            }
+        }
+    }
+
+    @Test
+    fun headerRulesMatchJdsp() {
+        val dir = createTempDirectory("irb").toFile()
+        val freqs = geomspace(100.0, 10000.0, 32)
+        val rows = (1..2000).joinToString("\n") { "${it * 10.0} 80 0" }
+        fun read(name: String, text: String) = Importer.read(Measurement(File(dir, name).apply { writeText(text) }.path, Seat.DRIVER, "c", Channel.L, Band.LOW, "r"), freqs, 48000)
+        // No header at all: the removed delay is unknown.
+        assertFailsWith<IllegalArgumentException> { read("a.txt", rows) }
+        // A header that isn't REW's and has no delay note: refused, not guessed.
+        assertFailsWith<IllegalArgumentException> { read("b.txt", "* exported by something\n$rows") }
+        // REW's own banner without a delay note means 0 ms.
+        assertEquals(0.0, read("c.txt", REW_HEADER + rows).restoredDelayMs, 0.0)
+        // A comma as the decimal point in the delay note and the rows.
+        val comma = "* Delay -1,5000 ms\n" + (1..2000).joinToString("\n") { "${it * 10},0 80,0 0,0" }
+        assertEquals(-1.5, read("d.txt", comma).restoredDelayMs, 1e-12)
+    }
+
+    @Test
+    fun utf16ExportsAreRead() {
+        val dir = createTempDirectory("irb").toFile()
+        val file = File(dir, "u16.txt")
+        val text = REW_HEADER + (1..2000).joinToString("\n") { "${it * 10.0} 80 0" }
+        file.writeBytes(byteArrayOf(0xFF.toByte(), 0xFE.toByte()) + text.toByteArray(Charsets.UTF_16LE))
+        val r = Importer.read(Measurement(file.path, Seat.DRIVER, "c", Channel.L, Band.LOW, "r"), geomspace(100.0, 10000.0, 16), 48000)
+        assertEquals(1e4, r.response.abs(0), 1e-6)
+    }
+
+    @Test
+    fun coarseSmoothingIsDetected() {
+        val dir = createTempDirectory("irb").toFile()
+        val freqs = geomspace(100.0, 10000.0, 16)
+        fun smoothed(label: String): Boolean {
+            val file = File(dir, "s${label.hashCode()}.txt")
+            Fixtures.writeRew(file, { Fixtures.C(1.0, 0.0) }, smoothing = label)
+            return Importer.read(Measurement(file.path, Seat.DRIVER, "c", Channel.L, Band.LOW, "r"), freqs, 48000).heavilySmoothed
+        }
+        assertFalse(smoothed("1/48 octave"))
+        assertFalse(smoothed("None"))
+        assertTrue(smoothed("1/6 octave"))
+        assertTrue(smoothed("Psychoacoustic"))
+    }
+
     companion object {
+        const val REW_HEADER = "* Measurement data measured by REW V5.40\n"
+
         fun writeMonoFloatWav(file: File, rate: Int, x: FloatArray) {
             val b = ByteBuffer.allocate(44 + x.size * 4).order(ByteOrder.LITTLE_ENDIAN)
             b.put("RIFF".toByteArray()).putInt(36 + x.size * 4).put("WAVE".toByteArray())
@@ -300,5 +362,67 @@ class ProjectAndTagsTest {
         val q = Project.load(file)
         assertEquals(p, q)
         assertNotNull(q.measurements.first())
+    }
+}
+
+class SmoothingTest {
+    private val freqs = MeasurementSet.grid(DesignOptions())
+
+    @Test
+    fun aLongDelayIsKeptExactlyThroughSmoothing() {
+        // 4 ms arrival: without taking the delay out, 1/12-octave vector smoothing at 10 kHz would
+        // average ~5 turns of phase and invent a deep dip.
+        val h = CVec(freqs.size)
+        for (i in freqs.indices) { val a = -2 * PI * freqs[i] * 0.004; h.re[i] = cos(a); h.im[i] = sin(a) }
+        for (n in listOf(48, 24, 12)) {
+            val s = Importer.complexSmooth(h, freqs, n)
+            for (i in freqs.indices) {
+                assertEquals(1.0, s.abs(i), 1e-6, "1/$n at ${freqs[i]} Hz")
+                assertEquals(0.0, wrap(s.arg(i) - h.arg(i)), 1e-6)
+            }
+        }
+    }
+
+    @Test
+    fun smoothingRemovesFineRippleButKeepsTheResponse() {
+        // A smooth band response with fine mic-position "grass" (±2 dB, a few % of an octave).
+        val rnd = Random(7)
+        val noisy = CVec(freqs.size)
+        val clean = CVec(freqs.size)
+        for (i in freqs.indices) {
+            val b = Fixtures.band(Band.MID, freqs[i])
+            clean.re[i] = b.re; clean.im[i] = b.im
+            val g = Math.pow(10.0, rnd.nextDouble(-2.0, 2.0) / 20)
+            noisy.re[i] = b.re * g; noisy.im[i] = b.im * g
+        }
+        fun rmsErrDb(x: CVec) = kotlin.math.sqrt(freqs.indices.map { (db(x.abs(it)) - db(clean.abs(it))).let { d -> d * d } }.average())
+        val raw = rmsErrDb(noisy)
+        val e48 = rmsErrDb(Importer.complexSmooth(noisy, freqs, 48))
+        val e24 = rmsErrDb(Importer.complexSmooth(noisy, freqs, 24))
+        val e12 = rmsErrDb(Importer.complexSmooth(noisy, freqs, 12))
+        assertTrue(e48 < raw && e24 < e48 && e12 < e24, "raw $raw, 1/48 $e48, 1/24 $e24, 1/12 $e12")
+        assertTrue(e12 < 0.6, "1/12: $e12 dB")
+    }
+
+    @Test
+    fun smoothingIsAppliedOnLoadAndKeepsBandsAligned() {
+        // Bands exported with different REW-removed delays still line up after smoothing.
+        val dir = createTempDirectory("irb").toFile()
+        val ms = Band.BRANCHES.mapIndexed { i, b ->
+            val file = File(dir, "driver_c_L_${b.fileName}.txt")
+            Fixtures.writeRew(file, { f -> Fixtures.band(b, f) }, removedDelayMs = listOf(-4.4, -2.1, -0.3)[i])
+            Measurement(file.path, Seat.DRIVER, "c", Channel.L, b, "ref")
+        }
+        val raw = MeasurementSet.load(ms, DesignOptions(measurementSmoothing = 0))
+        val smooth = MeasurementSet.load(ms, DesignOptions(measurementSmoothing = 12))
+        val g0 = raw.groups.single()
+        val g1 = smooth.groups.single()
+        for (xo in listOf(150.0, 3500.0)) {
+            val (lo, hi) = if (xo < 1000) Band.LOW to Band.MID else Band.MID to Band.HIGH
+            val a = Checks.relativePhase(g0.branch(lo), g0.branch(hi), raw.freqs, xo)
+            val b = Checks.relativePhase(g1.branch(lo), g1.branch(hi), smooth.freqs, xo)
+            assertEquals(0.0, wrap(a - b), Math.toRadians(2.0), "at $xo Hz")
+        }
+        assertFailsWith<IllegalArgumentException> { DesignOptions(measurementSmoothing = 6).validate() }
     }
 }

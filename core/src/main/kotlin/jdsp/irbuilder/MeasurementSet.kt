@@ -50,7 +50,7 @@ class MeasurementSet(
             for (m in measurements) {
                 val key = GroupKey(m.seat, m.position.trim(), m.channel)
                 val r = try {
-                    Importer.read(m, freqs, o.sampleRate)
+                    Importer.read(m, freqs, o.sampleRate, o.measurementSmoothing)
                 } catch (e: Exception) {
                     errors += LoadError(m, e.message ?: e.toString())
                     continue

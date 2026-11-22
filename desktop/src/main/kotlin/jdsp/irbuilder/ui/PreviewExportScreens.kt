@@ -179,7 +179,7 @@ fun ExportScreen(state: AppState) {
         if (d != null) {
             val o = d.options
             Panel("Load it in J_DSP", accent = Jdsp.LightBlue) {
-                listOf(
+                (listOfNotNull(
                     "Copy band-ir-package.zip to the head unit.",
                     "Convolver page → import the package. Check Low, Mid and High all load, then select Per-band.",
                     "Set band-mode gain to 0 dB to reproduce this prediction.",
@@ -187,7 +187,7 @@ fun ExportScreen(state: AppState) {
                     "Expect about %.0f ms of added latency. Check video, phone and navigation audio.".format(o.jdspLatencyMs),
                     "Don't normalise or realign the WAVs individually.",
                     "Re-measure both seats with the IRs active, and re-check the PEQ where the summed level rose.",
-                ).forEachIndexed { i, s -> Note("${i + 1}. $s") }
+                )).forEachIndexed { i, s -> Note("${i + 1}. $s") }
             }
         }
     }

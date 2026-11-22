@@ -46,7 +46,7 @@ class ScreensRenderTest {
         for (seat in Seat.entries) for ((pi, pos) in listOf("centre", "pos2", "held").withIndex()) for (ch in Channel.entries) {
             for (b in Band.entries) {
                 val file = File(dir, "${seat.name.lowercase()}_${pos}_${ch.name}_${b.fileName}.txt")
-                val sb = StringBuilder()
+                val sb = StringBuilder("* Measurement data measured by REW V5.40\n")
                 for (i in 0 until 2000) {
                     val f = 10.0 * Math.pow(2200.0, i / 1999.0)
                     fun band(x: Band): Pair<Double, Double> {
@@ -76,16 +76,28 @@ class ScreensRenderTest {
         val set = MeasurementSet.load(state.measurements.toList(), state.options)
         state.set = set
         state.checks = Checks.run(set)
+        state.updateAlign(jdsp.irbuilder.AlignOptions(jdsp.irbuilder.JdspTiming(
+            lowL = jdsp.irbuilder.BandSetting(2.0), lowR = jdsp.irbuilder.BandSetting(2.0),
+            highL = jdsp.irbuilder.BandSetting(1.0), highR = jdsp.irbuilder.BandSetting(1.0),
+        )))
+        state.alignment = jdsp.irbuilder.BandAlign.solve(set, state.align)
         state.design = Designer.design(set)
-        for (step in Step.entries) {
-            state.step = step
+        fun render(name: String) {
             val scene = ImageComposeScene(1480, 2400, Density(1f)) { JdspTheme { App(state) } }
             scene.render()
-            val image = scene.render(100_000_000)
-            val png = image.encodeToData(EncodedImageFormat.PNG)!!.bytes
-            File(outDir, "${step.ordinal + 1}-${step.name.lowercase()}.png").writeBytes(png)
+            val png = scene.render(100_000_000).encodeToData(EncodedImageFormat.PNG)!!.bytes
+            File(outDir, "$name.png").writeBytes(png)
             scene.close()
             assertTrue(png.size > 10_000)
+        }
+        state.tool = null
+        render("0-start")
+        for (tool in jdsp.irbuilder.Tool.entries) {
+            state.tool = tool
+            stepsFor(tool).forEachIndexed { i, step ->
+                state.step = step
+                render("${tool.name.lowercase()}-${i + 1}-${step.name.lowercase()}")
+            }
         }
     }
 }
