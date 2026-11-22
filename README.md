@@ -16,7 +16,22 @@ program models what is really there: for each seat, mic position and channel, th
 of each software branch through the complete system, summed as complex responses. It never adds a
 crossover and never assumes six independent outputs.
 
-## Workflow
+## Two tools
+
+The app opens on a start screen with two independent tools. Both begin with importing and checking
+measurements; neither runs the other.
+
+- **Band Align** (Measurements → Checks → Band Align): J_DSP's Band Align, extended. Per side, the
+  Low delay/polarity against Mid and the High delay/polarity against Mid that make the bands add up
+  best at both seats, never making a seat worse and only for at least 0.5 dB. Result: a list of
+  settings to enter on J_DSP's DELAY page. No added latency.
+- **Phase IRs** (Measurements → Checks → Design → Preview → Export): phase-only Low/Mid/High FIRs for
+  the convolver's Per-band mode, designed on the measurements as taken.
+
+Recommended order: Band Align → enter the changes in J_DSP → re-measure → Phase IRs from the fresh
+sweeps. Projects remember which tool they belong to.
+
+## Phase IRs workflow
 
 1. **Measurements**: import REW frequency/SPL/phase text exports (`.txt`, `.csv`, `.frd`) or
    calibrated mono impulse WAVs. Tag each file with seat, position, channel, software band

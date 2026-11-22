@@ -29,8 +29,7 @@ fun BandAlignScreen(state: AppState) {
             Note(
                 "Finds each side's Low delay and polarity against Mid, and High's against Mid, that make the bands add up best " +
                     "through each crossover at every seat together — J_DSP's Band Align, run on these measurements. A change that " +
-                    "would make either seat worse is never proposed. These are J_DSP settings (no latency); the phase IRs are then " +
-                    "designed on top of them for whatever is left.",
+                    "would make either seat worse is never proposed. These are J_DSP settings, with no added latency.",
                 Color.White,
             )
         }
@@ -61,13 +60,11 @@ fun BandAlignScreen(state: AppState) {
             Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.Bottom) {
                 Labeled("Low against Mid") { GlassSwitch(a.lowMid, { state.updateAlign(a.copy(lowMid = it)) }) }
                 Labeled("High against Mid") { GlassSwitch(a.midHigh, { state.updateAlign(a.copy(midHigh = it)) }) }
-                Labeled("Use in the IR design") { GlassSwitch(a.useInDesign, { state.updateAlign(a.copy(useInDesign = it)) }) }
                 GlassButton(
                     "Find delays and polarity", { state.runAlign() }, accent = Jdsp.MGreen,
                     enabled = state.alignError == null && (a.lowMid || a.midHigh) && state.measurements.isNotEmpty() && state.busy == null,
                 )
             }
-            Note("With \"Use in the IR design\" on, Calculate designs the IRs for the measurements as they will be after these changes, and the package lists them. Make the changes in J_DSP before loading the IRs.")
         }
         val r = state.alignment ?: return@Column
         r.error?.let { Panel("Can't apply together", accent = Jdsp.MRed) { Note(it, Jdsp.MRed) } }
@@ -81,6 +78,7 @@ fun BandAlignScreen(state: AppState) {
                         Text(settingText(c.from) + "  →  " + settingText(c.to), color = Color.White, fontSize = 15.sp)
                     }
                 }
+                Note("Next: enter these on J_DSP's Alignment › DELAY page, re-measure both seats, and run Band Align again to confirm (it should propose no further change). For Phase IRs, start that tool from the fresh sweeps.", Jdsp.LightBlue)
                 if (r.sharedOffsetMs > 0) {
                     Note("A band wanted to play earlier than 0 ms, so it's set to 0 and every other band is ${trimNumber(r.sharedOffsetMs)} ms later. Mid/High and left/right timing are unchanged relative to each other.", Jdsp.Orange)
                 }

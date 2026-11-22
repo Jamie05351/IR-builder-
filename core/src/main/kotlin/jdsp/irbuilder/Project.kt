@@ -4,11 +4,20 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
 
+/** The two independent tools the app offers; a project belongs to one. */
+@Serializable
+enum class Tool(val title: String) {
+    BAND_ALIGN("Band Align"),
+    PHASE_IRS("Phase IRs"),
+}
+
 /** A saved session: the measurement list with its tags, and the design settings. */
 @Serializable
 data class Project(
     val format: String = FORMAT,
     val version: Int = 1,
+    /** Null in projects saved before the tools were split: opened as Phase IRs. */
+    val tool: Tool? = null,
     val measurements: List<Measurement> = emptyList(),
     val options: DesignOptions = DesignOptions(),
     val align: AlignOptions = AlignOptions(),

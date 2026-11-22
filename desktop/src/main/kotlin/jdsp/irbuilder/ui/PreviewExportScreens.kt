@@ -165,10 +165,6 @@ fun ExportScreen(state: AppState) {
                 return@Panel
             }
             val o = d.options
-            if (d.report.jdspSettingChanges.isNotEmpty()) {
-                Note("These IRs were designed for the Band Align changes. Make them in J_DSP first:", Jdsp.Orange)
-                d.report.jdspSettingChanges.forEach { Note("• " + it.text, Color.White) }
-            }
             Note("Writes low.wav, mid.wav and high.wav (stereo float32, ${o.sampleRate} Hz, ${o.taps} taps), manifest.json, report.json, README.txt and band-ir-package.zip — the package J_DSP's convolver page imports.", Color.White)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 GlassButton("Choose folder and export…", {
@@ -184,7 +180,6 @@ fun ExportScreen(state: AppState) {
             val o = d.options
             Panel("Load it in J_DSP", accent = Jdsp.LightBlue) {
                 (listOfNotNull(
-                    d.report.jdspSettingChanges.takeIf { it.isNotEmpty() }?.let { c -> "First, on J_DSP's Alignment › DELAY page: " + c.joinToString("; ") { it.text } + "." },
                     "Copy band-ir-package.zip to the head unit.",
                     "Convolver page → import the package. Check Low, Mid and High all load, then select Per-band.",
                     "Set band-mode gain to 0 dB to reproduce this prediction.",

@@ -81,16 +81,23 @@ class ScreensRenderTest {
             highL = jdsp.irbuilder.BandSetting(1.0), highR = jdsp.irbuilder.BandSetting(1.0),
         )))
         state.alignment = jdsp.irbuilder.BandAlign.solve(set, state.align)
-        state.design = Designer.design(set, state.alignment)
-        for (step in Step.entries) {
-            state.step = step
+        state.design = Designer.design(set)
+        fun render(name: String) {
             val scene = ImageComposeScene(1480, 2400, Density(1f)) { JdspTheme { App(state) } }
             scene.render()
-            val image = scene.render(100_000_000)
-            val png = image.encodeToData(EncodedImageFormat.PNG)!!.bytes
-            File(outDir, "${step.ordinal + 1}-${step.name.lowercase()}.png").writeBytes(png)
+            val png = scene.render(100_000_000).encodeToData(EncodedImageFormat.PNG)!!.bytes
+            File(outDir, "$name.png").writeBytes(png)
             scene.close()
             assertTrue(png.size > 10_000)
+        }
+        state.tool = null
+        render("0-start")
+        for (tool in jdsp.irbuilder.Tool.entries) {
+            state.tool = tool
+            stepsFor(tool).forEachIndexed { i, step ->
+                state.step = step
+                render("${tool.name.lowercase()}-${i + 1}-${step.name.lowercase()}")
+            }
         }
     }
 }

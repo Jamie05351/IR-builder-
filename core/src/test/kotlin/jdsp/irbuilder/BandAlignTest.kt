@@ -178,7 +178,7 @@ class BandAlignExportTest {
     @Test
     fun projectKeepsBandAlignSettings() {
         val file = java.io.File(kotlin.io.path.createTempDirectory("irb").toFile(), "p.jirb")
-        val p = Project(align = AlignOptions(JdspTiming(lowL = BandSetting(1.25, true)), lowMid = true, midHigh = false, useInDesign = false))
+        val p = Project(tool = Tool.BAND_ALIGN, align = AlignOptions(JdspTiming(lowL = BandSetting(1.25, true)), lowMid = true, midHigh = false))
         Project.save(p, file)
         assertEquals(p, Project.load(file))
     }

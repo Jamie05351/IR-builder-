@@ -1,5 +1,7 @@
 package jdsp.irbuilder.ui
 
+import jdsp.irbuilder.Tool
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -30,6 +32,52 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 
+@Composable
+private fun StartScreen(state: AppState) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Panel("What do you want to do?", accent = Jdsp.Orange, trailing = {
+            GlassButton("Open project…", { Dialogs.openFiles("Open project", listOf("jirb"), multiple = false)?.firstOrNull()?.let(state::openProject) }, accent = Jdsp.Purple)
+        }) {
+            Note("Two independent tools. Both start from REW band-solo sweeps at both seats. For the best result use Band Align first, enter its changes in J_DSP, re-measure, then design Phase IRs from the fresh sweeps.", Color.White)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            ToolCard(
+                state, Tool.BAND_ALIGN, Jdsp.MGreen, Modifier.weight(1f),
+                "Delay and polarity in J_DSP",
+                listOf(
+                    "Finds each side's Low and High delay and polarity against Mid that make the bands add up best at both seats.",
+                    "Never makes a seat worse; only proposes changes worth 0.5 dB or more.",
+                    "Result: a short list of settings to enter on J_DSP's DELAY page.",
+                    "No added latency.",
+                ),
+                "Steps: Measurements → Checks → Band Align",
+            )
+            ToolCard(
+                state, Tool.PHASE_IRS, Jdsp.HighPink, Modifier.weight(1f),
+                "Phase-alignment IRs for J_DSP's convolver",
+                listOf(
+                    "Designs Low/Mid/High phase-only FIRs that make the bands sum coherently through both crossovers at both seats.",
+                    "Leaves band magnitude alone: tone stays with your PEQ.",
+                    "Result: band-ir-package.zip for the convolver page's Per-band mode.",
+                    "Adds about 192 ms latency by default (adjustable).",
+                ),
+                "Steps: Measurements → Checks → Design → Preview → Export",
+            )
+        }
+        if (state.measurements.isNotEmpty()) Note("${state.measurements.size} imported measurement(s) stay loaded when you switch tools.")
+    }
+}
+
+@Composable
+private fun ToolCard(state: AppState, tool: Tool, accent: Color, modifier: Modifier, subtitle: String, points: List<String>, steps: String) {
+    Panel(tool.title, modifier = modifier, accent = accent) {
+        Text(subtitle, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        points.forEach { Note("• $it", Color.White) }
+        Note(steps)
+        GlassButton("Start ${tool.title}", { state.startTool(tool) }, accent = accent)
+    }
+}
+
 fun main() = application {
     Window(
         onCloseRequest = ::exitApplication,
@@ -52,7 +100,7 @@ fun App(state: AppState) {
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 val scroll = rememberScrollState()
                 Column(Modifier.verticalScroll(scroll).padding(20.dp)) {
-                    when (state.step) {
+                    if (state.tool == null) StartScreen(state) else when (state.step) {
                         Step.MEASUREMENTS -> MeasurementsScreen(state)
                         Step.CHECKS -> ChecksScreen(state)
                         Step.BAND_ALIGN -> BandAlignScreen(state)
@@ -76,7 +124,18 @@ private fun Sidebar(state: AppState) {
         Text("J_DSP", color = Jdsp.LightBlue, fontSize = 26.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
         Text("IR BUILDER", color = Jdsp.TextDim, fontSize = 12.sp, letterSpacing = 3.sp)
         Box(Modifier.padding(top = 8.dp))
-        Step.entries.forEachIndexed { i, s ->
+        val tool = state.tool
+        Row(
+            Modifier.fillMaxWidth().glassBox(if (tool == null) Jdsp.Orange else Jdsp.TextDim, borderAlpha = if (tool == null) 1f else 0.3f)
+                .clickable { state.tool = null }.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Start", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                Text(tool?.let { "Tool: ${it.title} · change" } ?: "Choose a tool", color = Jdsp.TextDim, fontSize = 11.sp)
+            }
+        }
+        if (tool != null) stepsFor(tool).forEachIndexed { i, s ->
             val selected = state.step == s
             val (badge, color) = stepStatus(state, s)
             Row(
@@ -94,7 +153,13 @@ private fun Sidebar(state: AppState) {
             }
         }
         Box(Modifier.weight(1f))
-        Note("Phase-only. Correction-only: J_DSP's crossovers, PEQ and delays stay as measured. Predictions must be verified with fresh measurements.")
+        Note(
+            when (tool) {
+                Tool.BAND_ALIGN -> "Band Align proposes J_DSP delay and polarity changes. Make them, then re-measure before designing IRs."
+                Tool.PHASE_IRS -> "Phase-only, correction-only IRs: J_DSP's crossovers, PEQ and delays stay as measured. Verify with fresh measurements."
+                null -> "Two separate tools. Each starts from its own measurements."
+            },
+        )
     }
 }
 

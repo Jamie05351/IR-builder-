@@ -53,8 +53,6 @@ data class AlignOptions(
     val timing: JdspTiming = JdspTiming(),
     val lowMid: Boolean = true,
     val midHigh: Boolean = true,
-    /** Design the phase IRs on the measurements as they will be with the proposals applied. */
-    val useInDesign: Boolean = true,
 )
 
 /** Which band is moved against Mid, and at which crossover it is scored. */

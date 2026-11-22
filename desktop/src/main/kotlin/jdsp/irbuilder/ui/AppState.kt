@@ -20,6 +20,7 @@ import jdsp.irbuilder.MeasurementSet
 import jdsp.irbuilder.PhaseDesign
 import jdsp.irbuilder.Project
 import jdsp.irbuilder.Seat
+import jdsp.irbuilder.Tool
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -33,6 +34,12 @@ enum class Step(val title: String, val subtitle: String) {
     DESIGN("Design", "Crossovers, limits, seats"),
     PREVIEW("Preview", "Predicted result"),
     EXPORT("Export", "Package for J_DSP"),
+}
+
+/** Each tool's own steps; both start with importing and checking measurements. */
+fun stepsFor(tool: Tool): List<Step> = when (tool) {
+    Tool.BAND_ALIGN -> listOf(Step.MEASUREMENTS, Step.CHECKS, Step.BAND_ALIGN)
+    Tool.PHASE_IRS -> listOf(Step.MEASUREMENTS, Step.CHECKS, Step.DESIGN, Step.PREVIEW, Step.EXPORT)
 }
 
 /** Tags applied to newly added files (filename auto-tagging may override them). */
@@ -51,6 +58,8 @@ data class Defaults(
 }
 
 class AppState(private val scope: CoroutineScope) {
+    /** The tool chosen on the start screen; null shows the start screen. */
+    var tool by mutableStateOf<Tool?>(null)
     var step by mutableStateOf(Step.MEASUREMENTS)
     val measurements = mutableStateListOf<Measurement>()
     val selected = mutableStateListOf<Int>()
@@ -81,14 +90,21 @@ class AppState(private val scope: CoroutineScope) {
         exportedZip = null
     }
 
-    /** Band Align inputs changed: its result and the design go, the checks stay valid. */
+    /** Opens a tool from the start screen. Imported measurements are kept. */
+    fun startTool(t: Tool) {
+        tool = t
+        step = Step.MEASUREMENTS
+        status = when (t) {
+            Tool.BAND_ALIGN -> "Band Align: import Low/Mid/High band-solo sweeps for both seats, then enter J_DSP's delays."
+            Tool.PHASE_IRS -> "Phase IRs: import software-band-solo sweeps for both seats and both channels."
+        }
+    }
+
+    /** Band Align inputs changed: its result goes, the checks stay valid. */
     fun updateAlign(a: AlignOptions) {
-        val onlyUse = a.copy(useInDesign = align.useInDesign) == align
         align = a
         alignError = runCatching { a.timing.validate() }.exceptionOrNull()?.message
-        if (!onlyUse) alignment = null
-        design = null
-        exportedZip = null
+        alignment = null
     }
 
     fun updateOptions(o: DesignOptions) {
@@ -195,7 +211,6 @@ class AppState(private val scope: CoroutineScope) {
         set = s
         checks = c
         alignment = r
-        design = null
         if (r == null) {
             status = "Band Align blocked: ${c.errors} error(s) on the Checks page."
             step = Step.CHECKS
@@ -224,21 +239,19 @@ class AppState(private val scope: CoroutineScope) {
     fun calculate() = background("Calculating phase-alignment filters…") {
         val snapshot = measurements.toList()
         val o = options
-        val a = align
-        val current = alignment
         val (s, c, d) = withContext(Dispatchers.Default) {
             val (s, c) = loadAndCheck(snapshot, o)
-            val used = if (!a.useInDesign || !c.canDesign) null else current?.takeIf { s === set } ?: BandAlign.solve(s, a)
-            Triple(s, c, if (c.canDesign) Designer.design(s, used) to used else null)
+            // The phase IRs are designed on the measurements as taken: Band Align is a separate
+            // tool, applied in J_DSP and re-measured before designing IRs.
+            Triple(s, c, if (c.canDesign) Designer.design(s) else null)
         }
-        if (inputsChangedSince(snapshot, o, a)) {
+        if (inputsChangedSince(snapshot, o)) {
             status = "Inputs changed while calculating; result discarded. Calculate again."
             return@background
         }
         set = s
         checks = c
-        design = d?.first
-        if (d?.second != null) alignment = d.second
+        design = d
         exportedZip = null
         if (d == null) {
             status = "Design blocked: ${c.errors} error(s) on the Checks page."
@@ -259,7 +272,7 @@ class AppState(private val scope: CoroutineScope) {
 
     fun saveProject(file: File) = background("Saving project…") {
         val f = if (file.extension.equals(Project.EXTENSION, true)) file else File(file.path + "." + Project.EXTENSION)
-        withContext(Dispatchers.IO) { Project.save(Project(measurements = measurements.toList(), options = options, align = align), f) }
+        withContext(Dispatchers.IO) { Project.save(Project(tool = tool, measurements = measurements.toList(), options = options, align = align), f) }
         projectFile = f
         status = "Saved ${f.name}"
     }
@@ -271,6 +284,8 @@ class AppState(private val scope: CoroutineScope) {
         selected.clear()
         updateOptions(p.options)
         updateAlign(p.align)
+        tool = p.tool ?: Tool.PHASE_IRS
+        step = Step.MEASUREMENTS
         projectFile = file
         status = "Opened ${file.name}: ${p.measurements.size} measurement(s)."
     }
