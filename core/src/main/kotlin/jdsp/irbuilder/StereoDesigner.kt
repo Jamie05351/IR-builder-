@@ -129,10 +129,11 @@ object StereoDesigner {
      */
     internal fun excessPhase(h: CVec, f: DoubleArray, o: DesignOptions, hintSeconds: Double = 0.0): DoubleArray {
         val tau = Importer.bulkDelaySeconds(h, f, hintSeconds)
-        val p = unwrap(DoubleArray(f.size) { i ->
+        val reliable = phaseReliable(DoubleArray(f.size) { h.abs(it) }, f)
+        val p = anchoredUnwrap(DoubleArray(f.size) { i ->
             val a = 2 * PI * f[i] * tau
             atan2(h.re[i] * sin(a) + h.im[i] * cos(a), h.re[i] * cos(a) - h.im[i] * sin(a))
-        })
+        }, f, reliable)
         return removeLinear(p, f, o)
     }
 
@@ -191,15 +192,20 @@ object StereoDesigner {
             val w = groups.map { o.seatWeight(it.key.seat) / counts.getValue(it.key.seat) }.let { raw -> raw.map { it / raw.sum() } }
             // Seat-weighted average of each position's unit phasor with its own arrival removed,
             // so seats at different distances agree on the shape of the phase, not its delay.
+            // Only phase each position can vouch for counts (see phaseReliable); where the positions
+            // that do disagree (their phasors mostly cancel), the point isn't trusted either.
             val zr = DoubleArray(n)
             val zi = DoubleArray(n)
+            val wsum = DoubleArray(n)
             groups.forEachIndexed { p, g ->
                 val r = g.responses.getValue(Band.COMBINED)
                 val h = r.response
                 val tau = Importer.bulkDelaySeconds(h, f, Importer.delayHintSeconds(r, o.sampleRate))
+                val ok = phaseReliable(DoubleArray(n) { h.abs(it) }, f)
                 for (i in 0 until n) {
                     val m = h.abs(i)
-                    if (m <= 0.0) continue
+                    if (m <= 0.0 || !ok[i]) continue
+                    wsum[i] += w[p]
                     val a = 2 * PI * f[i] * tau
                     val c = cos(a)
                     val s = sin(a)
@@ -207,7 +213,8 @@ object StereoDesigner {
                     zi[i] += w[p] * (h.re[i] * s + h.im[i] * c) / m
                 }
             }
-            val avg = unwrap(DoubleArray(n) { atan2(zi[it], zr[it]) })
+            val agree = BooleanArray(n) { wsum[it] >= 0.5 && kotlin.math.hypot(zr[it], zi[it]) >= 0.5 * wsum[it] }
+            val avg = anchoredUnwrap(DoubleArray(n) { atan2(zi[it], zr[it]) }, f, agree)
             // Reference: the straight line (a pure delay plus a constant) through the averaged phase
             // at both ends of the range, so the correction is ~0 where it fades out. A least-squares
             // line would leave large residuals at the ends, and fading those to zero in a short

@@ -10,6 +10,7 @@ enum class Tool(val title: String) {
     BAND_ALIGN("Band Align"),
     PHASE_IRS("Phase IRs"),
     CROSSOVER_FINDER("Crossover Finder"),
+    EQ_WIZARD("EQ Wizard"),
 }
 
 /** A saved session: the measurement list with its tags, and the design settings. */
@@ -23,6 +24,7 @@ data class Project(
     val options: DesignOptions = DesignOptions(),
     val align: AlignOptions = AlignOptions(),
     val finder: FinderOptions = FinderOptions(),
+    val eq: EqOptions = EqOptions(),
     val notes: String = "",
 ) {
     companion object {

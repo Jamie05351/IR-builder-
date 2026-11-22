@@ -61,6 +61,9 @@ class CVec(val re: DoubleArray, val im: DoubleArray) {
 
 internal fun db(x: Double) = 20 * log10(max(x, 1e-12))
 
+/** Public for the UI: [n] points spaced evenly in log frequency. */
+fun geomspaceOf(start: Double, stop: Double, n: Int) = geomspace(start, stop, n)
+
 internal fun geomspace(start: Double, stop: Double, n: Int): DoubleArray {
     val a = ln(start)
     val b = ln(stop)
@@ -164,6 +167,72 @@ internal fun interp(x: DoubleArray, xp: DoubleArray, fp: DoubleArray, left: Doub
         val x0 = xp[j]
         val x1 = xp[minOf(j + 1, xp.size - 1)]
         out[i] = if (x1 == x0) fp[j] else fp[j] + (fp[minOf(j + 1, fp.size - 1)] - fp[j]) * (v - x0) / (x1 - x0)
+    }
+    return out
+}
+
+/**
+ * Where a response's phase can be trusted, after Resonalyze's unwrap gates (MIT): within 30 dB of
+ * its own level averaged over an octave around the point, and within 60 dB of its loudest. A
+ * dip, a stopband or a band nobody swept carries ±180° of noise that would read as signal.
+ */
+internal fun phaseReliable(mag: DoubleArray, freqs: DoubleArray): BooleanArray {
+    val n = mag.size
+    val p = DoubleArray(n) { mag[it] * mag[it] }
+    val ppo = (n - 1) / kotlin.math.log2(freqs.last() / freqs.first())
+    val half = (ppo / 2).toInt().coerceAtLeast(1)
+    val prefix = DoubleArray(n + 1)
+    for (i in 0 until n) prefix[i + 1] = prefix[i] + p[i]
+    val top = p.maxOrNull() ?: 0.0
+    return BooleanArray(n) { i ->
+        val a = (i - half).coerceAtLeast(0)
+        val b = (i + half).coerceAtMost(n - 1)
+        val local = (prefix[b + 1] - prefix[a]) / (b - a + 1)
+        p[i] > 0 && p[i] >= local * 1e-3 && p[i] >= top * 1e-6
+    }
+}
+
+/**
+ * Unwraps [wrapped] (radians) trusting only [reliable] points, after Resonalyze's anchored unwrap
+ * (MIT): each point takes the 2π branch nearest the phase predicted from the last reliable point
+ * plus a running slope (blended a quarter at a time, so one jittery point can't steer the rest);
+ * unreliable points never become anchors. They're then filled by interpolating linearly in
+ * frequency between the reliable points around them (the ends held flat), so a noisy dip neither
+ * adds a turn to everything above it nor puts its noise into a correction.
+ */
+internal fun anchoredUnwrap(wrapped: DoubleArray, freqs: DoubleArray, reliable: BooleanArray): DoubleArray {
+    val n = wrapped.size
+    val out = wrapped.copyOf()
+    var anchor = -1
+    var slope = 0.0
+    for (i in 0 until n) {
+        if (anchor < 0) {
+            if (reliable[i]) anchor = i
+            continue
+        }
+        val pred = out[anchor] + slope * (freqs[i] - freqs[anchor])
+        out[i] = wrapped[i] + 2 * PI * Math.rint((pred - wrapped[i]) / (2 * PI))
+        if (reliable[i]) {
+            val s = (out[i] - out[anchor]) / (freqs[i] - freqs[anchor])
+            slope += 0.25 * (s - slope)
+            anchor = i
+        }
+    }
+    val anchors = (0 until n).filter { reliable[it] }
+    if (anchors.isEmpty()) return unwrap(wrapped)
+    var k = 0
+    for (i in 0 until n) {
+        if (reliable[i]) continue
+        while (k < anchors.size - 1 && anchors[k + 1] < i) k++
+        out[i] = when {
+            i < anchors.first() -> out[anchors.first()]
+            i > anchors.last() -> out[anchors.last()]
+            else -> {
+                val a = anchors[k]
+                val b = anchors[k + 1]
+                out[a] + (out[b] - out[a]) * (freqs[i] - freqs[a]) / (freqs[b] - freqs[a])
+            }
+        }
     }
     return out
 }

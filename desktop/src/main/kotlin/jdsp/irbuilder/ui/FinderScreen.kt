@@ -98,7 +98,17 @@ fun FinderScreen(state: AppState) {
                 Text(xo.label, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 for (s in XoSlot.of(xo).toList()) LimitsRow(s, f) { set(f.withLimits(s, it)) }
             }
-            if (f.limits.isNotEmpty()) GlassButton("Reset limits to defaults", { set(f.copy(limits = emptyMap())) }, accent = Jdsp.TextDim)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                GlassButton("Suggest from measurements", { state.suggestFinderLimits() }, accent = Jdsp.Orange, enabled = state.measurements.isNotEmpty() && state.finderError == null && state.busy == null)
+                if (f.limits.isNotEmpty()) GlassButton("Reset limits to defaults", { set(f.copy(limits = emptyMap())) }, accent = Jdsp.TextDim)
+            }
+            state.bandRanges?.let { ranges ->
+                Note("Measured driver paths, with J_DSP's crossover divided out (usable = within 8 dB of the band's typical level; ≤ or + = the data ran out first, so it may reach further):")
+                ranges.forEach { (b, r) ->
+                    Note("${b.label}: ${if (r.lowOpen) "≤" else ""}${trimNumber(Math.round(r.lowHz).toDouble())} Hz to ${trimNumber(Math.round(r.highHz).toDouble())} Hz${if (r.highOpen) "+" else ""}", bandColor(b))
+                }
+                Note("A highpass is kept above its driver's low edge and a lowpass below its high edge. This reads output, not excursion or distortion: it can't tell you what a speaker can safely take.", Jdsp.Orange)
+            }
         }
         Panel("Run", accent = Jdsp.MGreen) {
             Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.Bottom) {
@@ -181,6 +191,7 @@ private fun FinderResultPanel(res: FinderResult, freqs: DoubleArray) {
                 Color.White)
             if (c.delayAtLimit) Note("${c.channel.label}: the best delay is at the end of J_DSP's range; it may want more.", Jdsp.MidYellow)
         }
+        res.channels.forEach { c -> c.seats.forEach { s -> lossText(s.lossBefore, s.lossAfter)?.let { Note("${c.channel.label} · ${s.seat.label}: $it", Color.White) } } }
         if (res.atSearchEdge.isNotEmpty()) Note("${res.atSearchEdge.joinToString { it.label }} ended at the edge of what was searched (your limit, J_DSP's range or an octave). Widen the limit only if the speaker can take it.", Jdsp.MidYellow)
         if (res.unreliable > 0) Note("${res.unreliable} candidate(s) left out because they'd rely on parts of a sweep that are too quiet or weren't swept.")
         res.channels.forEach { c ->

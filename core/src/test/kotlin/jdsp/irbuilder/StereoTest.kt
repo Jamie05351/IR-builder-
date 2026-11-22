@@ -154,3 +154,18 @@ class ArrivalEstimateTest {
         assertEquals(0.003, Importer.bulkDelaySeconds(h, f, -0.004), 0.0004)
     }
 }
+
+class AnchoredUnwrapTest {
+    @Test
+    fun aNoisyDipDoesNotAddATurnToEverythingAbove() {
+        val f = geomspace(40.0, 16000.0, 768)
+        // A smooth phase (an all-pass-like rotation up to ~300°), with a dip of noise at 2–2.6 kHz.
+        val truth = DoubleArray(f.size) { i -> -2 * kotlin.math.atan(f[i] / 900.0) * 2.7 }
+        val rnd = java.util.Random(7)
+        val mag = DoubleArray(f.size) { i -> if (f[i] in 2000.0..2600.0) 0.003 else 1.0 }
+        val wrapped = DoubleArray(f.size) { i -> if (f[i] in 2000.0..2600.0) (rnd.nextDouble() * 2 - 1) * Math.PI else wrap(truth[i]) }
+        val got = anchoredUnwrap(wrapped, f, phaseReliable(mag, f))
+        val offset = got[0] - truth[0]
+        for (i in f.indices) if (f[i] !in 1900.0..2700.0) assertEquals(truth[i] + offset, got[i], 1e-6, "${f[i]} Hz")
+    }
+}

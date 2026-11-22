@@ -16,14 +16,15 @@ program models what is really there: for each seat, mic position and channel, th
 of each software branch through the complete system, summed as complex responses. It never adds a
 crossover and never assumes six independent outputs.
 
-## Three tools
+## Four tools
 
-The app opens on a start screen with three independent tools. All begin with importing and checking
+The app opens on a start screen with four independent tools. All begin with importing and checking
 measurements; none runs another.
 
 - **Band Align** (Measurements → Checks → Band Align): J_DSP's Band Align, extended. Per side, the
   Low delay/polarity against Mid and the High delay/polarity against Mid that make the bands add up
-  best at both seats, never making a seat worse and only for at least 0.5 dB. Result: a list of
+  best at both seats, scored by sum loss (below), never making a seat worse and only for at least
+  0.2 dB less average loss; the polarity flips only if that wins by 0.5 dB. Result: a list of
   settings to enter on J_DSP's DELAY page. No added latency.
 - **Phase IRs** (Measurements → Checks → Design → Preview → Export): phase-only Low/Mid/High FIRs for
   the convolver's Per-band mode, designed on the measurements as taken. Each crossover is corrected
@@ -43,6 +44,31 @@ measurements; none runs another.
   what a speaker can safely take; by default half an octave, and a highpass no shallower than now).
   Result: crossover, delay and polarity settings to enter in J_DSP, with seat plots and the
   next-best options.
+
+- **EQ Wizard** (Measurements → Checks → EQ Wizard): J_DSP Parametric EQ bands (peaking, J_DSP's
+  own biquad) that bring each side's response, averaged over both seats, toward a house curve (a
+  bass lift and a treble tilt). Cuts are free; boosts are capped and never exceed what the
+  octave-wide response lacks, so narrow dips (cancellation) aren't filled. Per side or one set for
+  both. Exports Equalizer APO text (`input_eq_wizard.txt`) that J_DSP's Parametric EQ imports into
+  Pre EQ; append it, since it corrects the tune you measured.
+
+### Shared measurement handling
+
+- **Impulse responses with a frequency-dependent window** (REW › Export › Impulse response as text,
+  or a WAV): each frequency is read through a window 8 cycles long (off/6/8/15) from the direct
+  sound, so the cabin's reflections stay out above a few hundred hertz and the phase is the
+  speakers'. REW frequency/SPL/phase text is still read, but can't be windowed.
+- **Arrival time** is read from the direct sound (each octave counts the same, noise floors
+  ignored), not dragged late by the loud bass.
+- **Sum loss**, 20·log10(|ΣH| / Σ|H|): how far the bands' real sum falls below the same bands added in
+  phase, taken per point and smoothed after, with noise floors gated out; read as average and
+  worst dip.
+- **Stereo IR phase** is unwrapped only where the measurements can vouch for it.
+
+Several of these follow [Resonalyze](https://github.com/DIMOSUS/Resonalyze) (MIT) by dimosus:
+the frequency-dependent window, sum loss and its gates, the reliability-gated unwrap, the
+polarity margin, the driver band estimate behind the Finder's suggested limits, and the EQ Wizard
+idea. Ideas are ported to Kotlin; no code is copied.
 
 The Phase IRs tool has two convolver modes, chosen on its Design page, matching J_DSP's convolver:
 

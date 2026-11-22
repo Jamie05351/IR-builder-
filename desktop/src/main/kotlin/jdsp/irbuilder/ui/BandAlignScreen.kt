@@ -98,7 +98,7 @@ private fun ResultPanel(res: AlignResult, freqs: DoubleArray) {
         val p = res.proposal
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Badge(if (p == null) "No change" else "${res.pair.moving.label} ${res.channel.name}: ${settingText(res.current)} → ${settingText(p)}", if (p == null) Jdsp.TextDim else Jdsp.MGreen)
-            if (p != null) Text("+%.2f dB in the crossover region (seat-weighted)".format(res.scoreDb), color = Jdsp.TextDim, fontSize = 13.sp)
+            if (p != null) Text("sum loss reduced by %.2f dB in the crossover region (seat-weighted)".format(res.scoreDb), color = Jdsp.TextDim, fontSize = 13.sp)
         }
         if (res.atRangeLimit) Note("The best delay is at the end of the range J_DSP allows; it may want more than the delays leave room for.", Jdsp.MidYellow)
         val lo = res.bandHz.start / 1.6
@@ -119,6 +119,8 @@ private fun ResultPanel(res: AlignResult, freqs: DoubleArray) {
             Note("Seat average of all three bands, smoothed ±1/24 octave. Shaded: the scored crossover region.")
             LinePlot(series, bottom, top, "dB", shades = listOf(Shade(res.bandHz.start, res.bandHz.endInclusive, accent.copy(alpha = 0.08f))), height = 220.dp, accent = accent)
         }
+        res.seats.forEach { s -> lossText(s.lossBefore, s.lossAfter)?.let { Note("${s.seat.label} (${s.positions} position(s)): $it", Color.White) } }
+        Note("Sum loss: how far the band sum falls below the bands added perfectly in phase (0 dB = no cancellation). Worst dip: its deepest point in the region.")
         val positions = res.positions.joinToString("   ") { "${it.key.seat.label} ${it.key.position}${if (it.validationOnly) " (val.)" else ""}: %+.2f dB".format(it.scoreDb) }
         Note("Per position: $positions")
     }

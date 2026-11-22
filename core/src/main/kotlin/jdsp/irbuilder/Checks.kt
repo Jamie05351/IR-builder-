@@ -97,6 +97,11 @@ data class CheckScope(
 
         const val FINDER_PURPOSE = "the Crossover Finder"
 
+        /** EQ Wizard: each side's Combined sweeps, or its band solos summed when there are none. */
+        fun eqWizard(measurements: List<Measurement>?): CheckScope =
+            if (measurements == null || measurements.any { it.band == Band.COMBINED }) CheckScope(listOf("EQ" to setOf(Band.COMBINED)), strict = false, purpose = "the EQ Wizard")
+            else CheckScope(listOf("EQ" to Band.BRANCHES.toSet()), strict = false, purpose = "the EQ Wizard")
+
         fun bandAlign(a: AlignOptions, measurements: List<Measurement>? = null): CheckScope {
             val enabled = AlignPair.entries.filter { if (it == AlignPair.LOW_MID) a.lowMid else a.midHigh }
             val (used, skipped) = enabled.partition { p -> measurements == null || measurements.any { it.band == p.moving } }
@@ -206,7 +211,7 @@ object Checks {
             for ((band, r) in g.responses) {
                 if (r.heavilySmoothed) warn("${g.key.label} ${band.label}: smoothed too coarsely (${r.smoothing})", "Phase smoothed coarser than 1/12 octave can't be summed reliably. Re-export from REW with 1/48 octave or no smoothing.")
                 val p = r.impulsePeakIndex
-                if (p != null && p < 2) warn("${g.key.label} ${band.label}: impulse peak at sample $p", "The WAV may have been trimmed to its own peak, losing the shared time origin. Export impulses with the timing-reference offset preserved.")
+                if (p != null && p < 2 && r.kind == SourceKind.IMPULSE_WAV) warn("${g.key.label} ${band.label}: impulse peak at sample $p", "The WAV may have been trimmed to its own peak, losing the shared time origin. Export impulses with the timing-reference offset preserved.")
             }
             // Bands should sit in frequency order; otherwise the tags are probably swapped.
             val present = Band.BRANCHES.filter { it in g.responses }

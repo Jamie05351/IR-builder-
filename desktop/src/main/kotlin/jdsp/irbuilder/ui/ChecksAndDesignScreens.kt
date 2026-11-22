@@ -45,8 +45,8 @@ fun ChecksScreen(state: AppState) {
         Panel("Measurement setup", accent = Jdsp.Cyan) {
             val o = state.options
             fun set(n: DesignOptions) = state.updateOptions(n)
-            val finder = state.tool == jdsp.irbuilder.Tool.CROSSOVER_FINDER
-            Note(if (finder) "The Crossover Finder takes J_DSP's crossovers from its own page; the sweeps are checked around them." else "Used by Band Align and Phase IRs. Enter the crossover corners J_DSP had during the sweeps: Band Align scores around them and the Phase IRs correct around them.")
+            val finder = state.tool == jdsp.irbuilder.Tool.CROSSOVER_FINDER || state.tool == jdsp.irbuilder.Tool.EQ_WIZARD
+            Note(if (state.tool == jdsp.irbuilder.Tool.EQ_WIZARD) "The EQ Wizard reads the fit range set on its own page." else if (finder) "The Crossover Finder takes J_DSP's crossovers from its own page; the sweeps are checked around them." else "Used by Band Align and Phase IRs. Enter the crossover corners J_DSP had during the sweeps: Band Align scores around them and the Phase IRs correct around them.")
             Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.Bottom) {
                 if (!finder) {
                     Labeled("Low/Mid crossover (Hz)") { NumberField(o.lowMidHz, { set(o.copy(lowMidHz = it)) }, accent = Jdsp.LowBand) }
@@ -66,6 +66,13 @@ fun ChecksScreen(state: AppState) {
                 }
             }
             Note("Complex (vector) smoothing applied to every file as it's read, so the checks, Band Align, the phase solver and the plots all use the same data. Each file's arrival time is taken out first and put back after, so phase stays exact. 1/24 suits most car measurements; 1/12 for noisy ones. Changing any of these re-reads the files.")
+            Text("Impulse window (impulse imports)", color = Jdsp.TextDim, fontSize = 12.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                jdsp.irbuilder.IMPULSE_WINDOW_CHOICES.forEach { n ->
+                    Chip(if (n == 0) "Off" else "$n cycles", o.impulseWindowCycles == n, { set(o.copy(impulseWindowCycles = n)) }, Jdsp.Cyan)
+                }
+            }
+            Note("For impulse responses (REW › Export › Impulse response as text, or a WAV): each frequency is read through a window that many cycles long from the direct sound, so the cabin's reflections stay out above a few hundred hertz and the phase is the speakers'. 8 is a good start; 15 keeps more of the room. REW frequency/SPL/phase text can't be windowed, so impulse exports give cleaner results.")
             runCatching { state.effectiveOptions().validateMeasurement() }.exceptionOrNull()?.message?.let { Note(it, Jdsp.MRed) }
         }
         Panel("Measurement checks", accent = Jdsp.MGreen, trailing = {
@@ -83,6 +90,7 @@ fun ChecksScreen(state: AppState) {
                 val ready = when (state.tool) {
                     jdsp.irbuilder.Tool.BAND_ALIGN -> "Ready for Band Align"
                     jdsp.irbuilder.Tool.CROSSOVER_FINDER -> "Ready for the Crossover Finder"
+                    jdsp.irbuilder.Tool.EQ_WIZARD -> "Ready for the EQ Wizard"
                     else -> "Ready to design"
                 }
                 Badge(if (c.canDesign) ready else "Fix errors first", if (c.canDesign) Jdsp.MGreen else Jdsp.MRed)

@@ -59,7 +59,7 @@ private fun ArchitecturePanel() {
                 "For each mic position, solo Low, Mid and High on the left channel, then the right. Optionally also sweep all bands together per channel (tag it Combined) to verify the band sum.",
                 "Timing reference: use one unchanged acoustic reference for every sweep of a channel (e.g. the opposite side's speaker with its bands unmuted, or an electrical loopback). Mute bands only on the measured side.",
                 "Positions: start with the centre plus two nearby positions for each seat. 6 positions × 6 sweeps = 36 band-solo files. One extra position per seat marked validation-only checks the result on data the fit never saw.",
-                "Export from REW: File › Export › Measurement as text (frequency, SPL, phase) for each sweep, or impulse WAVs with the timing-reference offset preserved. Keep the .mdat originals.",
+                "Export from REW: File › Export › Impulse response as text (best: keeps the time base and lets the app window out the cabin's reflections), or Measurement as text (frequency, SPL, phase), or impulse WAVs with the timing-reference offset preserved. Turn REW's IR window and normalisation off. Keep the .mdat originals.",
                 "Name files like driver_pos2_L_mid.txt so seat, position, channel and band fill in automatically.",
             )
             steps.forEachIndexed { i, s -> Note("${i + 1}. $s") }
@@ -99,7 +99,7 @@ private fun DefaultsPanel(state: AppState) {
 private fun FilesPanel(state: AppState) {
     Panel("Measurements (${state.measurements.size})", accent = Jdsp.LightBlue) {
         if (state.measurements.isEmpty()) {
-            Note("No files yet. Add REW text exports (.txt/.csv/.frd) or mono impulse WAVs.")
+            Note("No files yet. Add REW exports: impulse response as text (best), measurement as text (.txt/.csv/.frd), or mono impulse WAVs.")
             return@Panel
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -148,6 +148,7 @@ private fun CompletenessPanel(state: AppState) {
     Panel("Completeness", accent = Jdsp.MGreen) {
         Note(
             if (state.tool == jdsp.irbuilder.Tool.PHASE_IRS && state.options.irMode == jdsp.irbuilder.IrMode.STEREO) "Stereo IR mode uses one Combined sweep (all bands playing, full range) per channel per position. Band-solo sweeps aren't used in this mode."
+            else if (state.tool == jdsp.irbuilder.Tool.EQ_WIZARD) "The EQ Wizard uses each side's Combined sweeps (all bands playing, wide range) at both seats. Without Combined sweeps it sums each position's Low/Mid/High solos. Measure through the tune as it will be used: the bands it proposes go on top."
             else if (state.tool == jdsp.irbuilder.Tool.CROSSOVER_FINDER) "The Crossover Finder needs the bands of each crossover it searches (Low + Mid, Mid + High), swept through J_DSP's current crossovers. Missing seats or sides are skipped with a warning. Band-limited sweeps are fine: candidates that would need data beyond a sweep are left out."
             else if (state.tool == jdsp.irbuilder.Tool.BAND_ALIGN) "Band Align needs the bands of the pairs switched on (Low + Mid, Mid + High). Missing seats or sides are skipped with a warning. Band-limited sweeps are fine if each band covers an octave either side of its crossovers."
             else "Phase IRs correct each crossover where both of its bands were measured (Low+Mid for Low/Mid, Mid+High for Mid/High), per channel. Anything without data is left as a pure delay. Combined is optional (validates the band sum). Each band needs to cover an octave either side of the crossovers it's used for.",

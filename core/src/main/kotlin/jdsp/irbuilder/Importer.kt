@@ -14,13 +14,13 @@ import kotlin.math.sin
 class WavData(val sampleRate: Int, val samples: DoubleArray)
 
 /** What kind of file a measurement was read from; affects some quality checks. */
-enum class SourceKind { REW_TEXT, IMPULSE_WAV }
+enum class SourceKind { REW_TEXT, IMPULSE_WAV, REW_IMPULSE_TEXT }
 
 /** A measurement resampled onto the design grid, with the time origin of the sweep kept. */
 class LoadedResponse(
     val response: CVec,
     val kind: SourceKind,
-    /** Peak sample of an impulse WAV (the time-origin sanity check); null for REW text. */
+    /** An impulse's direct-sound onset, in samples after its t = 0; null for frequency-response text. */
     val impulsePeakIndex: Int? = null,
     /** Lowest and highest frequency the file itself covers. */
     val coverageHz: ClosedFloatingPointRange<Double>,
@@ -57,7 +57,9 @@ object Importer {
         m: Measurement, freqs: DoubleArray, sampleRate: Int, smoothing: Int = 0,
         /** The span this file must cover; null means the whole grid. */
         required: ClosedFloatingPointRange<Double>? = null,
-    ): LoadedResponse = silenceOutsideSweep(readSmoothed(m, freqs, sampleRate, smoothing, required), freqs)
+        /** Impulses only: frequency-dependent window length in cycles (0 = the whole impulse). */
+        windowCycles: Int = 0,
+    ): LoadedResponse = silenceOutsideSweep(readSmoothed(m, freqs, sampleRate, smoothing, required, windowCycles, freqs), freqs)
 
     /** A band-limited sweep says nothing beyond its ends: the band is taken as silent there. */
     private fun silenceOutsideSweep(r: LoadedResponse, freqs: DoubleArray): LoadedResponse {
@@ -70,8 +72,11 @@ object Importer {
         return LoadedResponse(h, r.kind, r.impulsePeakIndex, r.coverageHz, r.smoothing, r.restoredDelayMs)
     }
 
-    private fun readSmoothed(m: Measurement, freqs: DoubleArray, sampleRate: Int, smoothing: Int, required: ClosedFloatingPointRange<Double>?): LoadedResponse {
-        val r = readRaw(m, freqs, sampleRate, required ?: freqs.first()..freqs.last())
+    private fun readSmoothed(m: Measurement, freqs: DoubleArray, sampleRate: Int, smoothing: Int, required: ClosedFloatingPointRange<Double>?, windowCycles: Int, grid: DoubleArray): LoadedResponse {
+        // Silence outside the sweep first: the reader holds a band-limited sweep's end values
+        // across the rest of the grid, and that flat-phase filler would otherwise outvote the real
+        // data in the arrival estimate the smoothing depends on.
+        val r = silenceOutsideSweep(readRaw(m, freqs, sampleRate, required ?: freqs.first()..freqs.last(), windowCycles), grid)
         if (smoothing <= 0) return r
         // Start from the delay the file itself states: REW's header note (restored = exported
         // delayed by it) or an impulse's peak. Only the small remainder is estimated.
@@ -100,7 +105,7 @@ object Importer {
      */
     fun delayHintSeconds(r: LoadedResponse, sampleRate: Int): Double = when (r.kind) {
         SourceKind.REW_TEXT -> r.restoredDelayMs / 1000.0
-        SourceKind.IMPULSE_WAV -> (r.impulsePeakIndex ?: 0).toDouble() / sampleRate
+        SourceKind.IMPULSE_WAV, SourceKind.REW_IMPULSE_TEXT -> (r.impulsePeakIndex ?: 0).toDouble() / sampleRate
     }
 
     /** [h]'s arrival delay: [hintSeconds] plus the remainder estimated from the grid. */
@@ -155,7 +160,7 @@ object Importer {
     private const val DIRECT_SOUND_HZ = 300.0
     private const val COARSE_RANGE_S = 0.02
 
-    private fun readRaw(m: Measurement, freqs: DoubleArray, sampleRate: Int, required: ClosedFloatingPointRange<Double>): LoadedResponse {
+    private fun readRaw(m: Measurement, freqs: DoubleArray, sampleRate: Int, required: ClosedFloatingPointRange<Double>, windowCycles: Int): LoadedResponse {
         require(m.position.isNotBlank()) { "Position is empty" }
         require(m.timingReference.isNotBlank()) { "Timing-reference ID is empty" }
         require(m.calibrationDb.isFinite() && abs(m.calibrationDb) <= 300) { "Calibration offset must be finite and within ±300 dB" }
@@ -163,8 +168,12 @@ object Importer {
         require(file.isFile) { "File not found: ${m.path}" }
         require(file.length() <= MAX_FILE_BYTES) { "${file.name}: file exceeds 128 MiB" }
         return when (file.extension.lowercase()) {
-            "wav" -> readImpulse(file, m, freqs, sampleRate)
-            "txt", "csv", "frd" -> readRewText(file, m, freqs, required)
+            "wav" -> readImpulse(file, m, freqs, sampleRate, windowCycles)
+            "txt", "csv", "frd" -> {
+                val text = decode(file.readBytes())
+                if (text.lineSequence().take(5).any { rewImpulseBanner.containsMatchIn(it) }) readRewImpulseText(file, text, m, freqs, sampleRate, windowCycles)
+                else readRewText(file, m, freqs, required)
+            }
             "mdat" -> throw IllegalArgumentException("${file.name}: export the measurement from REW as text (File › Export › Measurement as text); .mdat is not read directly")
             else -> throw IllegalArgumentException("${file.name}: use REW frequency/SPL/phase text (.txt/.csv/.frd) or a mono impulse .wav")
         }
@@ -291,12 +300,19 @@ object Importer {
         return LoadedResponse(out, SourceKind.REW_TEXT, null, fa.first()..fa.last(), smoothing, delayMs)
     }
 
-    private fun readImpulse(file: File, m: Measurement, freqs: DoubleArray, sampleRate: Int): LoadedResponse {
+    private fun readImpulse(file: File, m: Measurement, freqs: DoubleArray, sampleRate: Int, windowCycles: Int): LoadedResponse {
         val wav = readWav(file)
         require(wav.sampleRate == sampleRate) { "${file.name}: WAV is ${wav.sampleRate} Hz but the project is $sampleRate Hz" }
         val x = wav.samples
         require(x.size in 16..(1 shl 22)) { "${file.name}: impulse must be 16 to 4194304 samples" }
         require(x.all { it.isFinite() } && x.maxOf { abs(it) } > 1e-12) { "${file.name}: impulse is silent or non-finite" }
+        if (windowCycles > 0) {
+            val onset = Fdw.onset(x, sampleRate)
+            val gain = 10.0.pow(m.calibrationDb / 20)
+            val h = Fdw.spectrum(x, sampleRate, 0.0, onset, windowCycles.toDouble(), freqs)
+            for (i in freqs.indices) { h.re[i] *= gain; h.im[i] *= gain }
+            return LoadedResponse(h, SourceKind.IMPULSE_WAV, onset, 0.0..sampleRate / 2.0)
+        }
         val n = maxOf(1 shl 18, nextPowerOfTwo(x.size))
         val spec = Fft.rfft(x, n)
         val fftF = Fft.rfftFreqs(n, sampleRate.toDouble())
@@ -312,6 +328,68 @@ object Importer {
         for (i in re.indices) { re[i] *= gain; im[i] *= gain }
         val out = CVec(re, im).delayed(freqs, delay)
         return LoadedResponse(out, SourceKind.IMPULSE_WAV, peak, 0.0..sampleRate / 2.0)
+    }
+
+    private val rewImpulseBanner = Regex("""Impulse Response data saved by REW""", RegexOption.IGNORE_CASE)
+    private val headerValue = Regex("""^\s*(-?[0-9][0-9.,eE+-]*)\s*//\s*(.+?)\s*$""")
+
+    /**
+     * REW's "Impulse response as text" export (header lines "value // label", then one sample per
+     * line after "* Data start"). It carries the absolute time base: "Start time (seconds)" is the
+     * time of the first sample, so t = 0 (the timing reference) sits at -start × rate. A normalised
+     * export is multiplied back by its stated peak, and REW's "Data offset (dB)" is applied so the
+     * level matches REW's SPL. A windowed or minimum-phase export is refused: it isn't the response.
+     */
+    private fun readRewImpulseText(file: File, text: String, m: Measurement, freqs: DoubleArray, sampleRate: Int, windowCycles: Int): LoadedResponse {
+        val values = HashMap<String, Double>()
+        val samples = ArrayList<Double>()
+        var normalised = false
+        var data = false
+        for (raw in text.lineSequence()) {
+            val line = raw.trim()
+            if (line.isEmpty()) continue
+            if (data) {
+                val v = line.replace(',', '.').toDoubleOrNull()
+                require(v != null && v.isFinite()) { "${file.name}: a sample can't be read: \"${line.take(40)}\"" }
+                samples += v
+                continue
+            }
+            if (line.startsWith("* Data start", ignoreCase = true)) { data = true; continue }
+            if (line.startsWith("*")) {
+                val note = line.trimStart('*').trim()
+                val negated = note.contains(" not ", ignoreCase = true)
+                when {
+                    note.startsWith("IR is", true) && (note.contains("normalised", true) || note.contains("normalized", true)) -> normalised = !negated
+                    note.startsWith("IR window", true) && note.contains("applied", true) && !negated ->
+                        throw IllegalArgumentException("${file.name}: REW's IR window was applied to this export. Export the impulse response again with the window off.")
+                    note.startsWith("IR is", true) && note.contains("min phase", true) && !negated ->
+                        throw IllegalArgumentException("${file.name}: this is the minimum-phase version, without its timing. Export the impulse response itself.")
+                }
+                continue
+            }
+            headerValue.find(line)?.let { mt -> mt.groupValues[1].replace(',', '.').toDoubleOrNull()?.let { values[mt.groupValues[2].lowercase()] = it } }
+        }
+        require(samples.size >= 16) { "${file.name}: the impulse export holds no samples" }
+        val interval = values["sample interval (seconds)"]
+        require(interval != null && interval > 0) { "${file.name}: the header states no sample interval" }
+        val rate = Math.round(1.0 / interval).toInt()
+        require(rate == sampleRate) { "${file.name}: impulse is $rate Hz but the project is $sampleRate Hz" }
+        val startTime = values["start time (seconds)"]
+            ?: throw IllegalArgumentException("${file.name}: the header states no start time, so the impulse can't be placed in time")
+        values["response length"]?.let { require(Math.round(it).toInt() == samples.size) { "${file.name}: the header declares ${Math.round(it)} samples but the file holds ${samples.size}; it was truncated or edited" } }
+        val x = samples.toDoubleArray()
+        if (normalised) {
+            val peak = values["peak value before normalisation"]
+            require(peak != null && peak > 0) { "${file.name}: a normalised export without its peak value can't be restored; export with normalisation off" }
+            for (i in x.indices) x[i] *= peak
+        }
+        require(x.maxOf { abs(it) } > 1e-15) { "${file.name}: impulse is silent" }
+        val timeZero = -startTime * rate
+        val onset = Fdw.onset(x, rate)
+        val gain = 10.0.pow(((values["data offset (db)"] ?: 0.0) + m.calibrationDb) / 20)
+        val h = Fdw.spectrum(x, rate, timeZero, onset, windowCycles.toDouble(), freqs)
+        for (i in freqs.indices) { h.re[i] *= gain; h.im[i] *= gain }
+        return LoadedResponse(h, SourceKind.REW_IMPULSE_TEXT, Math.round(onset - timeZero).toInt(), 0.0..rate / 2.0)
     }
 
     /** Reads PCM 8/16/24/32-bit or float 32/64-bit WAV, including WAVE_FORMAT_EXTENSIBLE. Mono only. */
