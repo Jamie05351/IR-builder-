@@ -106,6 +106,7 @@ class ScreensRenderTest {
         state.design = Designer.design(set)
         state.updateFinder(state.finder.copy(timing = state.align.timing))
         state.finding = jdsp.irbuilder.CrossoverFinder.solve(set, state.finder)
+        state.updateEq(state.eq.copy(useCurve = true, curve = jdsp.irbuilder.HouseCurve.fromBuiltIn(state.eq)))
         state.eqResult = jdsp.irbuilder.EqWizard.solve(set, state.eq)
         for (tool in jdsp.irbuilder.Tool.entries) {
             state.tool = tool

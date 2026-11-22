@@ -365,6 +365,18 @@ class AppState(private var scope: CoroutineScope) {
         } else status = "EQ Wizard: ${r.bands.size} band(s). Preview, then export for J_DSP's Pre EQ."
     }
 
+    fun importCurve(file: File) = background("Reading house curve…") {
+        val pts = withContext(Dispatchers.IO) { jdsp.irbuilder.HouseCurve.parse(file.readText()) }
+        updateEq(eq.copy(curve = pts, useCurve = true))
+        status = "House curve: ${pts.size} points from ${file.name}."
+    }
+
+    fun saveCurve(file: File) = background("Saving house curve…") {
+        val f = if (file.extension.isEmpty()) File(file.path + ".txt") else file
+        withContext(Dispatchers.IO) { f.writeText(jdsp.irbuilder.HouseCurve.text(eq.curve.sortedBy { it.hz })) }
+        status = "Saved ${f.name}"
+    }
+
     fun exportEq(file: File) = background("Writing PEQ file…") {
         val r = eqResult ?: throw IllegalStateException("Run the EQ Wizard first")
         val f = if (file.extension.equals("txt", true)) file else File(file.path + ".txt")

@@ -61,6 +61,9 @@ class CVec(val re: DoubleArray, val im: DoubleArray) {
 
 internal fun db(x: Double) = 20 * log10(max(x, 1e-12))
 
+/** Public for the UI: [n] points spaced evenly in log frequency. */
+fun geomspaceOf(start: Double, stop: Double, n: Int) = geomspace(start, stop, n)
+
 internal fun geomspace(start: Double, stop: Double, n: Int): DoubleArray {
     val a = ln(start)
     val b = ln(stop)

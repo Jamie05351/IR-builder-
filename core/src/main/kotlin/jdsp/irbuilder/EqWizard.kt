@@ -21,6 +21,69 @@ enum class EqSide(val apo: String, val label: String) { BOTH("ALL", "L+R"), LEFT
 @Serializable
 data class EqBand(val hz: Double, val gainDb: Double, val q: Double, val side: EqSide = EqSide.BOTH)
 
+/** One point of a house curve: level relative to the rest of the curve, dB. */
+@Serializable
+data class CurvePoint(val hz: Double, val db: Double)
+
+/**
+ * A house curve as points, joined straight in log frequency and held flat beyond its ends. Only
+ * its shape matters: the wizard levels it to the measured response.
+ */
+object HouseCurve {
+    fun at(points: List<CurvePoint>, hz: Double): Double {
+        if (points.isEmpty()) return 0.0
+        val p = points.sortedBy { it.hz }
+        if (hz <= p.first().hz) return p.first().db
+        if (hz >= p.last().hz) return p.last().db
+        val k = p.indexOfFirst { it.hz >= hz }
+        val a = p[k - 1]
+        val b = p[k]
+        return a.db + (b.db - a.db) * log2(hz / a.hz) / log2(b.hz / a.hz)
+    }
+
+    /**
+     * Reads a house curve or target file: REW's house curve format ("freq dB" per line, "*"
+     * comments) and most others: tab, space, comma or semicolon separated, a comma as the decimal
+     * point, extra columns (phase) ignored, "#", ";" and "//" comments, a header row skipped.
+     */
+    fun parse(text: String): List<CurvePoint> {
+        val out = ArrayList<CurvePoint>()
+        for (raw in text.lineSequence()) {
+            val line = raw.substringBefore("//").trim()
+            if (line.isEmpty() || line.startsWith("*") || line.startsWith("#") || line.startsWith(";")) continue
+            val nums = twoNumbers(line) ?: continue
+            val hz = nums.first
+            val db = nums.second
+            if (!hz.isFinite() || !db.isFinite() || hz <= 0) continue
+            if (out.isNotEmpty() && hz <= out.last().hz) continue
+            out += CurvePoint(hz, db)
+        }
+        require(out.size >= 2) { "No frequency / dB rows found. Use one \"frequency dB\" pair per line." }
+        require(out.size <= 2000) { "The curve has ${out.size} points; keep it under 2000" }
+        return out
+    }
+
+    /** The first two numbers of a row: ";"-separated, whitespace-separated, or CSV. */
+    private fun twoNumbers(line: String): Pair<Double, Double>? {
+        val fields = when {
+            ';' in line -> line.split(';')
+            line.trim().split(Regex("\\s+")).size >= 2 -> line.trim().split(Regex("\\s+")).map { it.trimEnd(',') }
+            else -> line.split(',')
+        }.map { it.trim().replace(',', '.') }.filter { it.isNotEmpty() }
+        if (fields.size < 2) return null
+        val a = fields[0].toDoubleOrNull() ?: return null
+        val b = fields[1].toDoubleOrNull() ?: return null
+        return a to b
+    }
+
+    fun text(points: List<CurvePoint>): String =
+        "* House curve from J_DSP IR Builder (frequency Hz, level dB)\n" + points.joinToString("") { "%.2f %.2f\n".format(java.util.Locale.ROOT, it.hz, it.db) }
+
+    /** The built-in curve as editable points: a starting point for a custom one. */
+    fun fromBuiltIn(o: EqOptions): List<CurvePoint> =
+        listOf(20.0, 40.0, 63.0, 100.0, 160.0, 250.0, 1000.0, 2000.0, 5000.0, 10000.0, 20000.0).map { CurvePoint(it, (EqWizard.builtInCurve(it, o) * 10).roundToInt() / 10.0) }
+}
+
 /** EQ Wizard settings saved with the project. */
 @Serializable
 data class EqOptions(
@@ -40,6 +103,9 @@ data class EqOptions(
     val maxQ: Double = 8.0,
     /** One set of bands for both sides (L+R), fitted to their average; else per side. */
     val linked: Boolean = false,
+    /** A custom house curve, used instead of the built-in one (bass lift, treble tilt) when [useCurve]. */
+    val curve: List<CurvePoint> = emptyList(),
+    val useCurve: Boolean = false,
 ) {
     fun validate() {
         require(listOf(minHz, maxHz, bassLiftDb, trebleTiltDb, maxBoostDb, maxCutDb, maxQ).all { it.isFinite() }) { "EQ settings must be finite numbers" }
@@ -50,6 +116,9 @@ data class EqOptions(
         require(!(maxBands > 8 && !linked)) { "Per-side EQ uses the bank twice: at most 8 bands per side to fit J_DSP's 16" }
         require(maxBoostDb in 0.0..12.0 && maxCutDb in 0.0..30.0) { "Boost must be 0–12 dB and cut 0–30 dB" }
         require(maxQ in 1.0..30.0) { "Max Q must be 1 to 30" }
+        require(!useCurve || curve.size >= 2) { "A custom house curve needs at least two points: import one or add points" }
+        require(curve.all { it.hz.isFinite() && it.db.isFinite() && it.hz in 10.0..24000.0 && it.db in -40.0..40.0 }) { "House curve points must be 10 Hz–24 kHz and −40 to +40 dB" }
+        require(curve.map { it.hz }.toSet().size == curve.size) { "House curve points need different frequencies" }
     }
 }
 
@@ -162,8 +231,11 @@ object EqWizard {
         return EqResult(f, o, results, preamp, warnings.distinct())
     }
 
-    /** The house curve's shape, dB: a low-shelf lift below ~100 Hz and a log tilt from 1 to 10 kHz. */
-    fun houseCurve(hz: Double, o: EqOptions): Double {
+    /** The house curve's shape, dB: the custom curve if there is one, else the built-in one. */
+    fun houseCurve(hz: Double, o: EqOptions): Double = if (o.useCurve && o.curve.size >= 2) HouseCurve.at(o.curve, hz) else builtInCurve(hz, o)
+
+    /** The built-in shape, dB: a low-shelf lift below ~100 Hz and a log tilt from 1 to 10 kHz. */
+    fun builtInCurve(hz: Double, o: EqOptions): Double {
         val shelf = o.bassLiftDb / (1 + (hz / 100.0).pow(2))
         val tilt = if (hz <= 1000) 0.0 else o.trebleTiltDb * log10(hz / 1000.0)
         return shelf + tilt
