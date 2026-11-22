@@ -258,7 +258,7 @@ object EqWizard {
 
     fun eqDb(bands: List<EqBand>, f: DoubleArray, fs: Double) = DoubleArray(f.size) { i -> bands.sumOf { peakDb(it, f[i], fs) } }
 
-    private fun fit(f: DoubleArray, wanted: DoubleArray, inFit: BooleanArray, o: EqOptions, side: EqSide, fs: Double): List<EqBand> {
+    internal fun fit(f: DoubleArray, wanted: DoubleArray, inFit: BooleanArray, o: EqOptions, side: EqSide, fs: Double): List<EqBand> {
         val idx = f.indices.filter { inFit[it] }
         val bands = ArrayList<EqBand>()
         fun clampBand(b: EqBand): EqBand {
@@ -266,7 +266,8 @@ object EqWizard {
             val qMax = if (g > 0) min(3.0, o.maxQ) else o.maxQ
             return b.copy(hz = b.hz.coerceIn(o.minHz, o.maxHz), gainDb = g, q = b.q.coerceIn(0.3, qMax))
         }
-        fun cost(bs: List<EqBand>): Double {
+        // How far the EQ misses what's wanted: mean square, dB².
+        fun fitError(bs: List<EqBand>): Double {
             var acc = 0.0
             for (i in idx) {
                 var e = 0.0
@@ -276,6 +277,9 @@ object EqWizard {
             }
             return acc / idx.size
         }
+        // What the refinement minimises: the fit error, plus a charge for bands that work against
+        // each other (see [overlapPenalty]) so a boost and a cut don't stack on one spot.
+        fun cost(bs: List<EqBand>) = fitError(bs) + overlapPenalty(bs)
         repeat(o.maxBands) {
             val eq = eqDb(bands, f, fs)
             val residual = DoubleArray(f.size) { if (inFit[it]) wanted[it] - eq[it] else 0.0 }
@@ -293,9 +297,39 @@ object EqWizard {
             bands += clampBand(EqBand(f[peak], g, q, side))
             refine(bands, ::cost, ::clampBand)
         }
+        // Drop bands that barely help: while removing one costs less than PRUNE_RMS_DB of fit
+        // (RMS), remove the least useful and re-fit the rest.
+        while (bands.size > 1) {
+            val base = sqrt(fitError(bands))
+            val (k, loss) = bands.indices.map { k -> k to sqrt(fitError(bands.filterIndexed { j, _ -> j != k })) - base }.minBy { it.second }
+            if (loss >= PRUNE_RMS_DB) break
+            bands.removeAt(k)
+            refine(bands, ::cost, ::clampBand)
+        }
         return bands.map { b -> b.copy(hz = b.hz.roundToInt().toDouble(), gainDb = (b.gainDb * 10).roundToInt() / 10.0, q = (b.q * 100).roundToInt() / 100.0) }
             .filter { abs(it.gainDb) >= 0.2 }
             .sortedBy { it.hz }
+    }
+
+    /** Least fit improvement (RMS, dB) a band must give to be kept. */
+    private const val PRUNE_RMS_DB = 0.1
+
+    /**
+     * Charge for bands working against each other: a boost and a cut within half an octave (they
+     * mostly cancel, wasting bands and headroom), and same-direction bands within a sixth of an
+     * octave (one band would do). Scaled by the smaller band's gain and how close they are.
+     */
+    internal fun overlapPenalty(bs: List<EqBand>): Double {
+        var pen = 0.0
+        for (a in bs.indices) for (b in a + 1 until bs.size) {
+            val x = bs[a]
+            val y = bs[b]
+            val d = abs(log2(x.hz / y.hz))
+            val g = min(abs(x.gainDb), abs(y.gainDb))
+            if (x.gainDb * y.gainDb < 0) { if (d < 0.5) pen += 0.15 * g * g * (1 - d / 0.5) }
+            else if (d < 1.0 / 6) pen += 0.05 * g * g * (1 - d * 6)
+        }
+        return pen
     }
 
     /** Coordinate descent on every band's frequency, gain and Q (log steps for f and Q). */
