@@ -364,3 +364,65 @@ class ProjectAndTagsTest {
         assertNotNull(q.measurements.first())
     }
 }
+
+class SmoothingTest {
+    private val freqs = MeasurementSet.grid(DesignOptions())
+
+    @Test
+    fun aLongDelayIsKeptExactlyThroughSmoothing() {
+        // 4 ms arrival: without taking the delay out, 1/12-octave vector smoothing at 10 kHz would
+        // average ~5 turns of phase and invent a deep dip.
+        val h = CVec(freqs.size)
+        for (i in freqs.indices) { val a = -2 * PI * freqs[i] * 0.004; h.re[i] = cos(a); h.im[i] = sin(a) }
+        for (n in listOf(48, 24, 12)) {
+            val s = Importer.complexSmooth(h, freqs, n)
+            for (i in freqs.indices) {
+                assertEquals(1.0, s.abs(i), 1e-6, "1/$n at ${freqs[i]} Hz")
+                assertEquals(0.0, wrap(s.arg(i) - h.arg(i)), 1e-6)
+            }
+        }
+    }
+
+    @Test
+    fun smoothingRemovesFineRippleButKeepsTheResponse() {
+        // A smooth band response with fine mic-position "grass" (±2 dB, a few % of an octave).
+        val rnd = Random(7)
+        val noisy = CVec(freqs.size)
+        val clean = CVec(freqs.size)
+        for (i in freqs.indices) {
+            val b = Fixtures.band(Band.MID, freqs[i])
+            clean.re[i] = b.re; clean.im[i] = b.im
+            val g = Math.pow(10.0, rnd.nextDouble(-2.0, 2.0) / 20)
+            noisy.re[i] = b.re * g; noisy.im[i] = b.im * g
+        }
+        fun rmsErrDb(x: CVec) = kotlin.math.sqrt(freqs.indices.map { (db(x.abs(it)) - db(clean.abs(it))).let { d -> d * d } }.average())
+        val raw = rmsErrDb(noisy)
+        val e48 = rmsErrDb(Importer.complexSmooth(noisy, freqs, 48))
+        val e24 = rmsErrDb(Importer.complexSmooth(noisy, freqs, 24))
+        val e12 = rmsErrDb(Importer.complexSmooth(noisy, freqs, 12))
+        assertTrue(e48 < raw && e24 < e48 && e12 < e24, "raw $raw, 1/48 $e48, 1/24 $e24, 1/12 $e12")
+        assertTrue(e12 < 0.6, "1/12: $e12 dB")
+    }
+
+    @Test
+    fun smoothingIsAppliedOnLoadAndKeepsBandsAligned() {
+        // Bands exported with different REW-removed delays still line up after smoothing.
+        val dir = createTempDirectory("irb").toFile()
+        val ms = Band.BRANCHES.mapIndexed { i, b ->
+            val file = File(dir, "driver_c_L_${b.fileName}.txt")
+            Fixtures.writeRew(file, { f -> Fixtures.band(b, f) }, removedDelayMs = listOf(-4.4, -2.1, -0.3)[i])
+            Measurement(file.path, Seat.DRIVER, "c", Channel.L, b, "ref")
+        }
+        val raw = MeasurementSet.load(ms, DesignOptions(measurementSmoothing = 0))
+        val smooth = MeasurementSet.load(ms, DesignOptions(measurementSmoothing = 12))
+        val g0 = raw.groups.single()
+        val g1 = smooth.groups.single()
+        for (xo in listOf(150.0, 3500.0)) {
+            val (lo, hi) = if (xo < 1000) Band.LOW to Band.MID else Band.MID to Band.HIGH
+            val a = Checks.relativePhase(g0.branch(lo), g0.branch(hi), raw.freqs, xo)
+            val b = Checks.relativePhase(g1.branch(lo), g1.branch(hi), smooth.freqs, xo)
+            assertEquals(0.0, wrap(a - b), Math.toRadians(2.0), "at $xo Hz")
+        }
+        assertFailsWith<IllegalArgumentException> { DesignOptions(measurementSmoothing = 6).validate() }
+    }
+}

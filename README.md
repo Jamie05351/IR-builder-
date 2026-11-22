@@ -23,7 +23,10 @@ crossover and never assumes six independent outputs.
    (Low/Mid/High, or Combined for validation), timing reference, calibration and validation-only.
    Names like `driver_pos2_L_mid.txt` fill the tags automatically. A completeness grid shows
    what is missing. Projects save as `.jirb`.
-2. **Checks**: timing-reference consistency per channel, completeness for both seats and both
+2. **Checks**: choose the measurement smoothing (none, 1/48, 1/24 by default, or 1/12 octave).
+   It is complex smoothing applied to every file as it's read, with each file's arrival time taken
+   out first and put back after, so the checks, Band Align, the solver and the plots share the same
+   data and phase stays exact. Then the checks: timing-reference consistency per channel, completeness for both seats and both
    channels, band-tag order, crossover level balance, level outliers between positions,
    combined-sweep vs band-sum agreement, impulse time-origin sanity, and whether positions agree
    on each crossover's band phase offset (if they don't, one fixed filter cannot suit them all).

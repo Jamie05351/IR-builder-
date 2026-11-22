@@ -76,6 +76,11 @@ data class DesignOptions(
     val maxShiftMs: Double = 2.0,
     /** Phase smoothing width, in octaves. */
     val smoothingOctaves: Double = 1.0 / 6.0,
+    /**
+     * Complex smoothing applied to every measurement as it is read, 1/N octave (0 = none): used by
+     * the checks, Band Align, the phase solver and the plots alike.
+     */
+    val measurementSmoothing: Int = 24,
     /** Pull toward "no change". Larger is more conservative. */
     val regularization: Double = 0.05,
     val driverWeight: Double = 1.0,
@@ -109,6 +114,7 @@ data class DesignOptions(
         require(regionOctaves in 0.25..2.0) { "Correction region must be 0.25 to 2 octaves" }
         require(fadeOctaves in 0.1..1.5) { "Fade width must be 0.1 to 1.5 octaves" }
         require(smoothingOctaves in 0.0..1.0) { "Smoothing must be 0 to 1 octave" }
+        require(measurementSmoothing in MEASUREMENT_SMOOTHING_CHOICES) { "Measurement smoothing must be none, 1/48, 1/24 or 1/12 octave" }
         require(regularization in 0.0..10.0) { "Regularization must be 0 to 10" }
         require(maxShiftMs > 0 && maxShiftMs <= 20) { "Maximum shift must be above 0 and at most 20 ms" }
         require(maxShiftMs * sampleRate / 1000.0 < minOf(latencyFrames, taps - latencyFrames) / 2.0) {
@@ -128,3 +134,6 @@ data class DesignOptions(
 }
 
 internal fun pow2(x: Double) = Math.pow(2.0, x)
+
+/** Measurement smoothing choices, 1/N octave; 0 is none. */
+val MEASUREMENT_SMOOTHING_CHOICES = listOf(0, 48, 24, 12)

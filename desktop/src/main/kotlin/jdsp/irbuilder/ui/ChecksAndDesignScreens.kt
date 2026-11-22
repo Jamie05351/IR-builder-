@@ -23,6 +23,14 @@ import kotlin.math.roundToInt
 @Composable
 fun ChecksScreen(state: AppState) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Panel("Measurement smoothing", accent = Jdsp.Cyan) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                jdsp.irbuilder.MEASUREMENT_SMOOTHING_CHOICES.forEach { n ->
+                    Chip(if (n == 0) "None" else "1/$n oct", state.options.measurementSmoothing == n, { state.updateOptions(state.options.copy(measurementSmoothing = n)) }, Jdsp.Cyan)
+                }
+            }
+            Note("Complex (vector) smoothing applied to every file as it's read, so the checks, Band Align, the phase solver and the plots all use the same data. Each file's arrival time is taken out first and put back after, so phase stays exact. 1/24 suits most car measurements; 1/12 for noisy ones. Changing it re-reads the files.")
+        }
         Panel("Measurement checks", accent = Jdsp.MGreen, trailing = {
             GlassButton("Run checks", { state.runChecks() }, accent = Jdsp.MGreen, enabled = state.measurements.isNotEmpty() && state.busy == null)
         }) {

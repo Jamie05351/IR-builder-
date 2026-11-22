@@ -45,8 +45,63 @@ class LoadedResponse(
 object Importer {
     const val MAX_FILE_BYTES = 128L * 1024 * 1024
 
-    /** Reads a REW frequency/SPL/phase export or a calibrated mono impulse WAV. */
-    fun read(m: Measurement, freqs: DoubleArray, sampleRate: Int): LoadedResponse {
+    /**
+     * Reads a REW frequency/SPL/phase export or a calibrated mono impulse WAV onto [freqs], then
+     * applies 1/[smoothing]-octave complex smoothing (0 = none). [freqs] must be log-spaced.
+     */
+    fun read(m: Measurement, freqs: DoubleArray, sampleRate: Int, smoothing: Int = 0): LoadedResponse {
+        val r = readRaw(m, freqs, sampleRate)
+        if (smoothing <= 0) return r
+        // Start from the delay the file itself states: REW's header note (restored = exported
+        // delayed by it) or an impulse's peak. Only the small remainder is estimated.
+        val hint = when (r.kind) {
+            SourceKind.REW_TEXT -> r.restoredDelayMs / 1000.0
+            SourceKind.IMPULSE_WAV -> (r.impulsePeakIndex ?: 0).toDouble() / sampleRate
+        }
+        return LoadedResponse(complexSmooth(r.response, freqs, smoothing, hint), r.kind, r.impulsePeakIndex, r.coverageHz, r.smoothing, r.restoredDelayMs)
+    }
+
+    /**
+     * 1/[n]-octave complex (vector) smoothing, the kind band sums need: magnitude and phase are
+     * averaged together. The response's bulk delay is taken out first and put back after, so the
+     * phase rotation of the arrival time doesn't cancel itself out at high frequencies. Gaussian
+     * window with a full width at half maximum of 1/n octave, reflected at the grid ends.
+     */
+    fun complexSmooth(h: CVec, freqs: DoubleArray, n: Int, delayHintSeconds: Double = 0.0): CVec {
+        val delay = delayHintSeconds + bulkDelaySeconds(h.delayed(freqs, -delayHintSeconds), freqs)
+        val flat = h.delayed(freqs, -delay)
+        val ppo = (freqs.size - 1) / kotlin.math.log2(freqs.last() / freqs.first())
+        val sigma = ppo / n / 2.3548
+        val sm = CVec(gaussianSmooth(flat.re, sigma), gaussianSmooth(flat.im, sigma))
+        return sm.delayed(freqs, delay)
+    }
+
+    /**
+     * The response's arrival time: the energy-weighted median of the local group delay between
+     * neighbouring grid points. Robust to the dips and reflections a car measurement has.
+     */
+    internal fun bulkDelaySeconds(h: CVec, freqs: DoubleArray): Double {
+        val taus = ArrayList<Pair<Double, Double>>(freqs.size)
+        for (i in 0 until freqs.size - 1) {
+            // arg(H[i+1]·conj(H[i])) is the phase step between neighbours, free of wrapping.
+            val re = h.re[i + 1] * h.re[i] + h.im[i + 1] * h.im[i]
+            val im = h.im[i + 1] * h.re[i] - h.re[i + 1] * h.im[i]
+            val w = h.abs(i) * h.abs(i + 1)
+            if (w <= 0.0) continue
+            taus += -kotlin.math.atan2(im, re) / (2 * PI * (freqs[i + 1] - freqs[i])) to w
+        }
+        if (taus.isEmpty()) return 0.0
+        taus.sortBy { it.first }
+        val half = taus.sumOf { it.second } / 2
+        var acc = 0.0
+        for ((tau, w) in taus) {
+            acc += w
+            if (acc >= half) return tau
+        }
+        return taus.last().first
+    }
+
+    private fun readRaw(m: Measurement, freqs: DoubleArray, sampleRate: Int): LoadedResponse {
         require(m.position.isNotBlank()) { "Position is empty" }
         require(m.timingReference.isNotBlank()) { "Timing-reference ID is empty" }
         require(m.calibrationDb.isFinite() && abs(m.calibrationDb) <= 300) { "Calibration offset must be finite and within ±300 dB" }
