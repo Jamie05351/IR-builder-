@@ -55,6 +55,7 @@ fun App(state: AppState) {
                     when (state.step) {
                         Step.MEASUREMENTS -> MeasurementsScreen(state)
                         Step.CHECKS -> ChecksScreen(state)
+                        Step.BAND_ALIGN -> BandAlignScreen(state)
                         Step.DESIGN -> DesignScreen(state)
                         Step.PREVIEW -> PreviewScreen(state)
                         Step.EXPORT -> ExportScreen(state)
@@ -100,6 +101,7 @@ private fun Sidebar(state: AppState) {
 private fun stepStatus(state: AppState, s: Step): Pair<String?, Color> = when (s) {
     Step.MEASUREMENTS -> (if (state.measurements.isEmpty()) null else "${state.measurements.size}") to Jdsp.LightBlue
     Step.CHECKS -> state.checks?.let { if (it.errors > 0) "${it.errors}✕" to Jdsp.MRed else if (it.warnings > 0) "${it.warnings}!" to Jdsp.MidYellow else "✓" to Jdsp.MGreen } ?: (null to Color.White)
+    Step.BAND_ALIGN -> state.alignment?.let { if (it.error != null) "!" to Jdsp.MRed else if (it.hasChanges) "${it.changes.size}" to Jdsp.MGreen else "✓" to Jdsp.MGreen } ?: (null to Color.White)
     Step.DESIGN -> (if (state.optionsError != null) "!" else null) to Jdsp.MRed
     Step.PREVIEW -> (if (state.design != null) "✓" else null) to Jdsp.MGreen
     Step.EXPORT -> (if (state.exportedZip != null) "✓" else null) to Jdsp.MGreen

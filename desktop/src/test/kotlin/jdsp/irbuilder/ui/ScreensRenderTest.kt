@@ -76,7 +76,12 @@ class ScreensRenderTest {
         val set = MeasurementSet.load(state.measurements.toList(), state.options)
         state.set = set
         state.checks = Checks.run(set)
-        state.design = Designer.design(set)
+        state.updateAlign(jdsp.irbuilder.AlignOptions(jdsp.irbuilder.JdspTiming(
+            lowL = jdsp.irbuilder.BandSetting(2.0), lowR = jdsp.irbuilder.BandSetting(2.0),
+            highL = jdsp.irbuilder.BandSetting(1.0), highR = jdsp.irbuilder.BandSetting(1.0),
+        )))
+        state.alignment = jdsp.irbuilder.BandAlign.solve(set, state.align)
+        state.design = Designer.design(set, state.alignment)
         for (step in Step.entries) {
             state.step = step
             val scene = ImageComposeScene(1480, 2400, Density(1f)) { JdspTheme { App(state) } }

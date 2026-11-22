@@ -11,6 +11,7 @@ data class Project(
     val version: Int = 1,
     val measurements: List<Measurement> = emptyList(),
     val options: DesignOptions = DesignOptions(),
+    val align: AlignOptions = AlignOptions(),
     val notes: String = "",
 ) {
     companion object {

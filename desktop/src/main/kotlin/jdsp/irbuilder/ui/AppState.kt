@@ -4,7 +4,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import jdsp.irbuilder.AlignOptions
 import jdsp.irbuilder.Band
+import jdsp.irbuilder.BandAlign
+import jdsp.irbuilder.BandAlignReport
 import jdsp.irbuilder.Channel
 import jdsp.irbuilder.CheckResult
 import jdsp.irbuilder.Checks
@@ -26,6 +29,7 @@ import java.io.File
 enum class Step(val title: String, val subtitle: String) {
     MEASUREMENTS("Measurements", "Import and tag"),
     CHECKS("Checks", "Timing, quality, completeness"),
+    BAND_ALIGN("Band Align", "Delay & polarity"),
     DESIGN("Design", "Crossovers, limits, seats"),
     PREVIEW("Preview", "Predicted result"),
     EXPORT("Export", "Package for J_DSP"),
@@ -57,6 +61,10 @@ class AppState(private val scope: CoroutineScope) {
     var checks by mutableStateOf<CheckResult?>(null)
     var set by mutableStateOf<MeasurementSet?>(null)
     var design by mutableStateOf<PhaseDesign?>(null)
+    var align by mutableStateOf(AlignOptions())
+        private set
+    var alignError by mutableStateOf<String?>(null)
+    var alignment by mutableStateOf<BandAlignReport?>(null)
     var busy by mutableStateOf<String?>(null)
     var status by mutableStateOf("Import software-band-solo sweeps for both seats and both channels.")
     var errorMessage by mutableStateOf<String?>(null)
@@ -68,6 +76,17 @@ class AppState(private val scope: CoroutineScope) {
     private fun invalidate() {
         checks = null
         set = null
+        alignment = null
+        design = null
+        exportedZip = null
+    }
+
+    /** Band Align inputs changed: its result and the design go, the checks stay valid. */
+    fun updateAlign(a: AlignOptions) {
+        val onlyUse = a.copy(useInDesign = align.useInDesign) == align
+        align = a
+        alignError = runCatching { a.timing.validate() }.exceptionOrNull()?.message
+        if (!onlyUse) alignment = null
         design = null
         exportedZip = null
     }
@@ -152,7 +171,38 @@ class AppState(private val scope: CoroutineScope) {
     }
 
     /** A background result is only published if the inputs it was computed from are still current. */
-    private fun inputsChangedSince(snapshot: List<Measurement>, o: DesignOptions) = measurements.toList() != snapshot || options != o
+    private fun inputsChangedSince(snapshot: List<Measurement>, o: DesignOptions, a: AlignOptions = align) =
+        measurements.toList() != snapshot || options != o || align != a
+
+    /** The loaded set and its checks, reusing what's current. */
+    private fun loadAndCheck(snapshot: List<Measurement>, o: DesignOptions): Pair<MeasurementSet, CheckResult> {
+        val s = set?.takeIf { it.options == o && it.measurements == snapshot } ?: MeasurementSet.load(snapshot, o)
+        return s to (checks?.takeIf { s === set } ?: Checks.run(s))
+    }
+
+    fun runAlign() = background("Searching delays and polarities…") {
+        val snapshot = measurements.toList()
+        val o = options
+        val a = align
+        val (s, c, r) = withContext(Dispatchers.Default) {
+            val (s, c) = loadAndCheck(snapshot, o)
+            Triple(s, c, if (c.canDesign) BandAlign.solve(s, a) else null)
+        }
+        if (inputsChangedSince(snapshot, o, a)) {
+            status = "Inputs changed while aligning; run Band Align again."
+            return@background
+        }
+        set = s
+        checks = c
+        alignment = r
+        design = null
+        if (r == null) {
+            status = "Band Align blocked: ${c.errors} error(s) on the Checks page."
+            step = Step.CHECKS
+        } else {
+            status = r.error ?: if (r.hasChanges) "Band Align: ${r.changes.size} J_DSP setting(s) to change." else "Band Align: the bands already add up; no changes."
+        }
+    }
 
     fun runChecks(then: (() -> Unit)? = null) = background("Reading measurements and running checks…") {
         val snapshot = measurements.toList()
@@ -174,18 +224,21 @@ class AppState(private val scope: CoroutineScope) {
     fun calculate() = background("Calculating phase-alignment filters…") {
         val snapshot = measurements.toList()
         val o = options
+        val a = align
+        val current = alignment
         val (s, c, d) = withContext(Dispatchers.Default) {
-            val s = set?.takeIf { it.options == o && it.measurements == snapshot } ?: MeasurementSet.load(snapshot, o)
-            val c = Checks.run(s)
-            Triple(s, c, if (c.canDesign) Designer.design(s) else null)
+            val (s, c) = loadAndCheck(snapshot, o)
+            val used = if (!a.useInDesign || !c.canDesign) null else current?.takeIf { s === set } ?: BandAlign.solve(s, a)
+            Triple(s, c, if (c.canDesign) Designer.design(s, used) to used else null)
         }
-        if (inputsChangedSince(snapshot, o)) {
+        if (inputsChangedSince(snapshot, o, a)) {
             status = "Inputs changed while calculating; result discarded. Calculate again."
             return@background
         }
         set = s
         checks = c
-        design = d
+        design = d?.first
+        if (d?.second != null) alignment = d.second
         exportedZip = null
         if (d == null) {
             status = "Design blocked: ${c.errors} error(s) on the Checks page."
@@ -206,7 +259,7 @@ class AppState(private val scope: CoroutineScope) {
 
     fun saveProject(file: File) = background("Saving project…") {
         val f = if (file.extension.equals(Project.EXTENSION, true)) file else File(file.path + "." + Project.EXTENSION)
-        withContext(Dispatchers.IO) { Project.save(Project(measurements = measurements.toList(), options = options), f) }
+        withContext(Dispatchers.IO) { Project.save(Project(measurements = measurements.toList(), options = options, align = align), f) }
         projectFile = f
         status = "Saved ${f.name}"
     }
@@ -217,6 +270,7 @@ class AppState(private val scope: CoroutineScope) {
         measurements.addAll(p.measurements)
         selected.clear()
         updateOptions(p.options)
+        updateAlign(p.align)
         projectFile = file
         status = "Opened ${file.name}: ${p.measurements.size} measurement(s)."
     }

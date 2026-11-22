@@ -70,18 +70,20 @@ object Fixtures {
         validationPositions: Set<String> = emptySet(),
         combined: Boolean = false,
         reference: (Channel) -> String = { if (it == Channel.L) "R-ref" else "L-ref" },
+        inverted: (Seat, Band) -> Boolean = { _, _ -> false },
     ): List<Measurement> {
+        fun sign(seat: Seat, b: Band) = if (inverted(seat, b)) -1.0 else 1.0
         val out = ArrayList<Measurement>()
         for (seat in Seat.entries) for (pos in positions) for (ch in Channel.entries) {
             val wiggle = (pos.hashCode() % 5) * 0.02
             for (b in Band.BRANCHES) {
                 val file = File(dir, "${seat.name}_${pos}_${ch.name}_${b.fileName}.txt")
-                writeRew(file, { f -> band(b, f, delaySeconds = delays(seat, b) * (1 + wiggle)) })
+                writeRew(file, { f -> band(b, f, delaySeconds = delays(seat, b) * (1 + wiggle)).scale(sign(seat, b)) })
                 out += Measurement(file.path, seat, pos, ch, b, reference(ch), pos in validationPositions)
             }
             if (combined) {
                 val file = File(dir, "${seat.name}_${pos}_${ch.name}_combined.txt")
-                writeRew(file, { f -> Band.BRANCHES.map { b -> band(b, f, delaySeconds = delays(seat, b) * (1 + wiggle)) }.reduce { a, c -> a + c } })
+                writeRew(file, { f -> Band.BRANCHES.map { b -> band(b, f, delaySeconds = delays(seat, b) * (1 + wiggle)).scale(sign(seat, b)) }.reduce { a, c -> a + c } })
                 out += Measurement(file.path, seat, pos, ch, Band.COMBINED, reference(ch), pos in validationPositions)
             }
         }
