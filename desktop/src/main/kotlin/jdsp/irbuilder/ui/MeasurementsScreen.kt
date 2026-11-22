@@ -59,7 +59,7 @@ private fun ArchitecturePanel() {
                 "For each mic position, solo Low, Mid and High on the left channel, then the right. Optionally also sweep all bands together per channel (tag it Combined) to verify the band sum.",
                 "Timing reference: use one unchanged acoustic reference for every sweep of a channel (e.g. the opposite side's speaker with its bands unmuted, or an electrical loopback). Mute bands only on the measured side.",
                 "Positions: start with the centre plus two nearby positions for each seat. 6 positions × 6 sweeps = 36 band-solo files. One extra position per seat marked validation-only checks the result on data the fit never saw.",
-                "Export from REW: File › Export › Measurement as text (frequency, SPL, phase) for each sweep, or impulse WAVs with the timing-reference offset preserved. Keep the .mdat originals.",
+                "Export from REW: File › Export › Impulse response as text (best: keeps the time base and lets the app window out the cabin's reflections), or Measurement as text (frequency, SPL, phase), or impulse WAVs with the timing-reference offset preserved. Turn REW's IR window and normalisation off. Keep the .mdat originals.",
                 "Name files like driver_pos2_L_mid.txt so seat, position, channel and band fill in automatically.",
             )
             steps.forEachIndexed { i, s -> Note("${i + 1}. $s") }
@@ -99,7 +99,7 @@ private fun DefaultsPanel(state: AppState) {
 private fun FilesPanel(state: AppState) {
     Panel("Measurements (${state.measurements.size})", accent = Jdsp.LightBlue) {
         if (state.measurements.isEmpty()) {
-            Note("No files yet. Add REW text exports (.txt/.csv/.frd) or mono impulse WAVs.")
+            Note("No files yet. Add REW exports: impulse response as text (best), measurement as text (.txt/.csv/.frd), or mono impulse WAVs.")
             return@Panel
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

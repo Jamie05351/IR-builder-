@@ -81,6 +81,12 @@ data class DesignOptions(
      * the checks, Band Align, the phase solver and the plots alike.
      */
     val measurementSmoothing: Int = 24,
+    /**
+     * Impulse imports (WAV or REW impulse text): the frequency-dependent window, in cycles of each
+     * frequency from the direct sound (0 = the whole impulse). 8 keeps the bass and leaves most of
+     * the cabin's reflections out above a few hundred hertz.
+     */
+    val impulseWindowCycles: Int = 8,
     /** Per-band Low/Mid/High IRs, or one stereo IR after the band sum. */
     val irMode: IrMode = IrMode.PER_BAND,
     /** Stereo mode: the summed phase is linearised between these frequencies (with fades outside). */
@@ -121,6 +127,7 @@ data class DesignOptions(
         require(regionOctaves in 0.25..2.0) { "Correction region must be 0.25 to 2 octaves" }
         require(fadeOctaves in 0.1..1.5) { "Fade width must be 0.1 to 1.5 octaves" }
         require(measurementSmoothing in MEASUREMENT_SMOOTHING_CHOICES) { "Measurement smoothing must be none, 1/48, 1/24 or 1/12 octave" }
+        require(impulseWindowCycles in IMPULSE_WINDOW_CHOICES) { "Impulse window must be off, 6, 8 or 15 cycles" }
     }
 
     /** Everything the Phase IR design needs: [validateMeasurement] plus the filter settings. */
@@ -195,3 +202,6 @@ enum class IrMode(val label: String) {
 
 /** Measurement smoothing choices, 1/N octave; 0 is none. */
 val MEASUREMENT_SMOOTHING_CHOICES = listOf(0, 48, 24, 12)
+
+/** Impulse window choices, cycles; 0 is the whole impulse. */
+val IMPULSE_WINDOW_CHOICES = listOf(0, 6, 8, 15)

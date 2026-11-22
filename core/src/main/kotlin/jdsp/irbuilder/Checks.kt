@@ -206,7 +206,7 @@ object Checks {
             for ((band, r) in g.responses) {
                 if (r.heavilySmoothed) warn("${g.key.label} ${band.label}: smoothed too coarsely (${r.smoothing})", "Phase smoothed coarser than 1/12 octave can't be summed reliably. Re-export from REW with 1/48 octave or no smoothing.")
                 val p = r.impulsePeakIndex
-                if (p != null && p < 2) warn("${g.key.label} ${band.label}: impulse peak at sample $p", "The WAV may have been trimmed to its own peak, losing the shared time origin. Export impulses with the timing-reference offset preserved.")
+                if (p != null && p < 2 && r.kind == SourceKind.IMPULSE_WAV) warn("${g.key.label} ${band.label}: impulse peak at sample $p", "The WAV may have been trimmed to its own peak, losing the shared time origin. Export impulses with the timing-reference offset preserved.")
             }
             // Bands should sit in frequency order; otherwise the tags are probably swapped.
             val present = Band.BRANCHES.filter { it in g.responses }

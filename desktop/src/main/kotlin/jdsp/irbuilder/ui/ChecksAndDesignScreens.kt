@@ -66,6 +66,13 @@ fun ChecksScreen(state: AppState) {
                 }
             }
             Note("Complex (vector) smoothing applied to every file as it's read, so the checks, Band Align, the phase solver and the plots all use the same data. Each file's arrival time is taken out first and put back after, so phase stays exact. 1/24 suits most car measurements; 1/12 for noisy ones. Changing any of these re-reads the files.")
+            Text("Impulse window (impulse imports)", color = Jdsp.TextDim, fontSize = 12.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                jdsp.irbuilder.IMPULSE_WINDOW_CHOICES.forEach { n ->
+                    Chip(if (n == 0) "Off" else "$n cycles", o.impulseWindowCycles == n, { set(o.copy(impulseWindowCycles = n)) }, Jdsp.Cyan)
+                }
+            }
+            Note("For impulse responses (REW › Export › Impulse response as text, or a WAV): each frequency is read through a window that many cycles long from the direct sound, so the cabin's reflections stay out above a few hundred hertz and the phase is the speakers'. 8 is a good start; 15 keeps more of the room. REW frequency/SPL/phase text can't be windowed, so impulse exports give cleaner results.")
             runCatching { state.effectiveOptions().validateMeasurement() }.exceptionOrNull()?.message?.let { Note(it, Jdsp.MRed) }
         }
         Panel("Measurement checks", accent = Jdsp.MGreen, trailing = {
