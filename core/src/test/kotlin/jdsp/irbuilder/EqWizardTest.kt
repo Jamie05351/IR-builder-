@@ -141,5 +141,30 @@ class EqWizardTest {
         assertEquals(0.0, s.eqDb[j], 1.0)
         assertTrue(s.rmsAfterDb < 1.0, "${s.rmsBeforeDb} -> ${s.rmsAfterDb}")
     }
+
+    @Test
+    fun aStackedBoostAndCutIsNotWhatTheFitterReturns() {
+        // Asked for exactly what a wide boost plus a narrow cut 1/8 octave away would give (the
+        // pair the old fitter returned on real sweeps), it finds a cleaner set: no opposing bands
+        // within a third of an octave, for nearly the same fit.
+        val f = geomspace(30.0, 16000.0, 600)
+        val pair = listOf(EqBand(5966.0, 6.0, 0.3), EqBand(6445.0, -2.5, 8.0))
+        val wanted = EqWizard.eqDb(pair, f, fs)
+        val inFit = BooleanArray(f.size) { f[it] in 30.0..12000.0 }
+        val bs = EqWizard.fit(f, wanted, inFit, EqOptions(maxBoostDb = 6.0), EqSide.BOTH, fs)
+        for (a in bs) for (b in bs) if (a !== b && a.gainDb * b.gainDb < 0)
+            assertTrue(abs(kotlin.math.log2(a.hz / b.hz)) >= 1.0 / 3, "opposing bands stacked: $a and $b in $bs")
+        val idx = f.indices.filter { inFit[it] }
+        val got = EqWizard.eqDb(bs, f, fs)
+        val rms = Math.sqrt(idx.sumOf { (wanted[it] - got[it]).let { d -> d * d } } / idx.size)
+        assertTrue(rms < 0.6, "fit RMS $rms with $bs")
+    }
+
+    @Test
+    fun theOverlapChargeOnlyHitsFightingBands() {
+        assertEquals(0.0, EqWizard.overlapPenalty(listOf(EqBand(100.0, -4.0, 1.0), EqBand(400.0, 4.0, 1.0))), 0.0)
+        assertTrue(EqWizard.overlapPenalty(listOf(EqBand(75.0, -5.0, 2.0), EqBand(77.0, 4.0, 0.3))) > 2.0)
+        assertEquals(0.0, EqWizard.overlapPenalty(listOf(EqBand(100.0, -4.0, 1.0), EqBand(200.0, -3.0, 1.0))), 0.0)
+    }
 }
 
