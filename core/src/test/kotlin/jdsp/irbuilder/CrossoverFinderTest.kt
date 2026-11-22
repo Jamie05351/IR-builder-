@@ -182,6 +182,28 @@ class CrossoverFinderTest {
     }
 
     @Test
+    fun driverBandsAreReadWithJdspsFiltersDividedOut() {
+        // The tweeter has a factory highpass at 2 kHz; J_DSP's High highpass sits at 3 kHz, so the
+        // data is trustworthy down to about 1.5 kHz. The tweeter path's usable low edge (about
+        // 1.85 kHz) is what bounds the High highpass.
+        val xo = JdspCrossovers(midLowpass = XoFilter(3000.0), highHighpass = XoFilter(3000.0))
+        val drivers = mapOf(Band.HIGH to Driver(listOf(XoFilter(2000.0, XoType.LR4) to true)))
+        val ms = sweeps(xo, drivers)
+        val f = FinderOptions(current = xo)
+        val set = MeasurementSet.load(ms, DesignOptions(lowMidHz = xo.lowMidHz, midHighHz = xo.midHighHz), f.crossovers.toSet())
+        val est = BandEstimate.estimate(set, xo)
+        val high = est.getValue(Band.HIGH)
+        assertFalse(high.lowOpen)
+        assertTrue(high.lowHz in 1700.0..2200.0, "High low edge ${high.lowHz}")
+        // Low is flat as far as J_DSP's lowpass lets the data be trusted: its top edge is open.
+        assertTrue(est.getValue(Band.LOW).highOpen)
+        val s = BandEstimate.suggestLimits(f, est)
+        assertTrue(s.limits(XoSlot.HIGH_HIGHPASS).minHz in 1700.0..2200.0, "${s.limits(XoSlot.HIGH_HIGHPASS)}")
+        assertEquals(f.limits(XoSlot.LOW_LOWPASS), s.limits(XoSlot.LOW_LOWPASS))
+        assertEquals(f.limits(XoSlot.HIGH_HIGHPASS).types, s.limits(XoSlot.HIGH_HIGHPASS).types)
+    }
+
+    @Test
     fun defaultLimitsKeepHighpassesNoShallower() {
         val l = FinderOptions.defaultLimits(XoSlot.HIGH_HIGHPASS, XoFilter(3500.0, XoType.LR4))
         assertEquals(setOf(XoType.LR4, XoType.BW4), l.types)

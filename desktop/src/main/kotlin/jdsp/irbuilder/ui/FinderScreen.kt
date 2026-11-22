@@ -98,7 +98,17 @@ fun FinderScreen(state: AppState) {
                 Text(xo.label, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 for (s in XoSlot.of(xo).toList()) LimitsRow(s, f) { set(f.withLimits(s, it)) }
             }
-            if (f.limits.isNotEmpty()) GlassButton("Reset limits to defaults", { set(f.copy(limits = emptyMap())) }, accent = Jdsp.TextDim)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                GlassButton("Suggest from measurements", { state.suggestFinderLimits() }, accent = Jdsp.Orange, enabled = state.measurements.isNotEmpty() && state.finderError == null && state.busy == null)
+                if (f.limits.isNotEmpty()) GlassButton("Reset limits to defaults", { set(f.copy(limits = emptyMap())) }, accent = Jdsp.TextDim)
+            }
+            state.bandRanges?.let { ranges ->
+                Note("Measured driver paths, with J_DSP's crossover divided out (usable = within 8 dB of the band's typical level; "≤" or "+" = the data ran out first, so it may reach further):")
+                ranges.forEach { (b, r) ->
+                    Note("${b.label}: ${if (r.lowOpen) "≤" else ""}${trimNumber(Math.round(r.lowHz).toDouble())} Hz to ${trimNumber(Math.round(r.highHz).toDouble())} Hz${if (r.highOpen) "+" else ""}", bandColor(b))
+                }
+                Note("A highpass is kept above its driver's low edge and a lowpass below its high edge. This reads output, not excursion or distortion: it can't tell you what a speaker can safely take.", Jdsp.Orange)
+            }
         }
         Panel("Run", accent = Jdsp.MGreen) {
             Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.Bottom) {

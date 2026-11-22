@@ -87,6 +87,8 @@ class AppState(private var scope: CoroutineScope) {
         private set
     var finderError by mutableStateOf<String?>(null)
     var finding by mutableStateOf<jdsp.irbuilder.FinderReport?>(null)
+    /** Each driver path's usable range, from the last "Suggest from measurements". */
+    var bandRanges by mutableStateOf<Map<Band, jdsp.irbuilder.BandEstimate.Range>?>(null)
     var busy by mutableStateOf<String?>(null)
     var status by mutableStateOf("Import software-band-solo sweeps for both seats and both channels.")
     var errorMessage by mutableStateOf<String?>(null)
@@ -315,6 +317,25 @@ class AppState(private var scope: CoroutineScope) {
             val n = r.filterChanges.size + r.timingChanges.size
             status = r.error ?: if (r.hasChanges) "Crossover Finder: $n J_DSP setting(s) to change." else "Crossover Finder: the current crossovers are already best; no changes."
         }
+    }
+
+    /** Reads each driver path's usable range from the sweeps and narrows the Finder's limits to it. */
+    fun suggestFinderLimits() = background("Reading each driver's usable range…") {
+        val snapshot = measurements.toList()
+        val o = effectiveOptions()
+        val f = finder
+        val (s, c, est) = withContext(Dispatchers.Default) {
+            val (s, c) = loadAndCheck(snapshot, o, CheckScope.crossoverFinder(f, snapshot))
+            Triple(s, c, jdsp.irbuilder.BandEstimate.estimate(s, f.current))
+        }
+        if (inputsChangedSince(snapshot, o, f = f)) {
+            status = "Inputs changed while reading; try again."
+            return@background
+        }
+        publish(s, c)
+        updateFinder(jdsp.irbuilder.BandEstimate.suggestLimits(f, est))
+        bandRanges = est
+        status = "Limits narrowed to the measured driver ranges. Check them against what your speakers can take."
     }
 
     fun runChecks(then: (() -> Unit)? = null) = background("Reading measurements and running checks…") {
