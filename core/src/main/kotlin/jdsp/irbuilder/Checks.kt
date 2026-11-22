@@ -44,17 +44,22 @@ class CheckResult(val items: List<CheckItem>, val crossoverPhases: List<Crossove
  * both seats and both channels (the package covers all six outputs). Band Align needs only the
  * bands of its enabled pairs, and a missing seat or side just means that one isn't aligned.
  */
-data class CheckScope(val requiredBands: Set<Band>, val strict: Boolean, val purpose: String) {
-    val crossovers: List<Crossover> get() = Crossover.entries.filter { it.lower in requiredBands && it.upper in requiredBands }
+data class CheckScope(
+    /** Each independent job and the bands it needs at a position: one triplet, or one per Band Align pair. */
+    val units: List<Pair<String, Set<Band>>>,
+    val strict: Boolean,
+    val purpose: String,
+) {
+    val requiredBands: Set<Band> get() = units.flatMap { it.second }.toSet()
+    val crossovers: List<Crossover> get() = Crossover.entries.filter { xo -> units.any { xo.lower in it.second && xo.upper in it.second } }
 
     companion object {
-        val PHASE_IRS = CheckScope(Band.BRANCHES.toSet(), strict = true, purpose = "the Phase IRs")
+        val PHASE_IRS = CheckScope(listOf("the Phase IRs" to Band.BRANCHES.toSet()), strict = true, purpose = "the Phase IRs")
 
+        /** One unit per enabled pair, so a position with only one pair's bands still counts for that pair. */
         fun bandAlign(a: AlignOptions) = CheckScope(
-            buildSet {
-                if (a.lowMid) { add(Band.LOW); add(Band.MID) }
-                if (a.midHigh) { add(Band.MID); add(Band.HIGH) }
-            },
+            AlignPair.entries.filter { if (it == AlignPair.LOW_MID) a.lowMid else a.midHigh }
+                .map { "${it.label} Band Align" to setOf(it.moving, Band.MID) },
             strict = false, purpose = "Band Align",
         )
     }
@@ -99,32 +104,35 @@ object Checks {
         val needed = Band.BRANCHES.filter { it in scope.requiredBands }
         for ((key, ms) in set.measurements.groupBy { GroupKey(it.seat, it.position.trim(), it.channel) }) {
             val bands = ms.map { it.band }.toSet()
-            val missing = needed.filter { it !in bands }
-            if (missing.isNotEmpty()) {
+            for ((unit, unitBands) in scope.units) {
+                val missing = Band.BRANCHES.filter { it in unitBands && it !in bands }
+                if (missing.isEmpty()) continue
                 val what = "Missing ${missing.joinToString { it.label }} software-band-solo sweep(s)"
                 if (scope.strict) err("${key.label}: incomplete", "$what.")
-                else warn("${key.label}: left out", "$what, so ${scope.purpose} doesn't use this position.")
+                else warn("${key.label}: not used for $unit", "$what for it.")
             }
             if (ms.map { it.validationOnly }.toSet().size > 1) err("${key.label}: mixed validation flag", "Mark all bands at a position validation-only, or none.")
             val cal = ms.filter { it.band != Band.COMBINED }.map { it.calibrationDb }.toSet()
             if (cal.size > 1) warn("${key.label}: calibration offsets differ", "Bands at one position normally share a calibration offset; different offsets change their relative level and the computed band sum.")
         }
-        fun usable(g: LoadedGroup) = g.has(needed) && !g.validationOnly
+        fun usable(g: LoadedGroup, bands: Set<Band>) = g.has(bands) && !g.validationOnly
         if (scope.strict) {
+            val bands = scope.requiredBands
             for (seat in Seat.entries) for (ch in Channel.entries) {
-                if (set.groups.none { it.key.seat == seat && it.key.channel == ch && usable(it) }) {
+                if (set.groups.none { it.key.seat == seat && it.key.channel == ch && usable(it, bands) }) {
                     err("No design data: ${seat.label} ${ch.label}", "Need at least one complete Low/Mid/High triplet that is not validation-only.")
                 }
             }
+        } else if (scope.units.none { (_, bands) -> set.groups.any { usable(it, bands) } }) {
+            err("Nothing to align", "No position has the sweeps for " + scope.units.joinToString(" or ") { (u, b) -> "$u (" + Band.BRANCHES.filter { it in b }.joinToString("/") { it.label } + ")" } + " that aren't validation-only.")
         } else {
-            val bandList = needed.joinToString("/") { it.label }
-            if (set.groups.none(::usable)) {
-                err("Nothing to align", "No position has $bandList sweeps that aren't validation-only.")
-            } else for (ch in Channel.entries) {
-                val seats = Seat.entries.filter { st -> set.groups.any { it.key.seat == st && it.key.channel == ch && usable(it) } }
+            // Judged per pair, the same way Band Align picks positions for each pair.
+            for ((unit, bands) in scope.units) for (ch in Channel.entries) {
+                val bandList = Band.BRANCHES.filter { it in bands }.joinToString("/") { it.label }
+                val seats = Seat.entries.filter { st -> set.groups.any { it.key.seat == st && it.key.channel == ch && usable(it, bands) } }
                 when {
-                    seats.isEmpty() -> warn("${ch.label} side not aligned", "No $bandList sweeps for the ${ch.label.lowercase()} side.")
-                    seats.size == 1 -> warn("${ch.label} side: ${seats.single().label} seat only", "The other seat has no $bandList sweeps, so it isn't checked for getting worse.")
+                    seats.isEmpty() -> warn("${ch.label} side: no $unit", "No $bandList sweeps for the ${ch.label.lowercase()} side.")
+                    seats.size == 1 -> warn("${ch.label} side $unit: ${seats.single().label} seat only", "The other seat has no $bandList sweeps, so it isn't checked for getting worse.")
                 }
             }
         }
@@ -221,8 +229,9 @@ object Checks {
             }
         }
 
-        val design = set.groups.count { it.has(needed) && !it.validationOnly }
-        val held = set.groups.count { it.has(needed) && it.validationOnly }
+        val usableAny = { g: LoadedGroup -> scope.units.any { g.has(it.second) } }
+        val design = set.groups.count { usableAny(it) && !it.validationOnly }
+        val held = set.groups.count { usableAny(it) && it.validationOnly }
         info("Measurement set", "$design usable position/channel set(s) for ${scope.purpose}, $held validation-only, ${set.measurements.size} file(s). Analysis range %.0f–%.0f Hz.".format(freqs.first(), freqs.last()))
         return CheckResult(items.sortedBy { it.severity.ordinal }, phases)
     }

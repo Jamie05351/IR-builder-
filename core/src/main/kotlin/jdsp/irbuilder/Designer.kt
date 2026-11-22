@@ -288,10 +288,13 @@ object Designer {
                     change.average().round(2), change.max().round(2),
                 )
             }
-            val combined = g.responses[Band.COMBINED]?.response?.let { c ->
+            val combined = g.responses[Band.COMBINED]?.let { r ->
+                val c = r.response
                 var num = 0.0
                 var den = 0.0
                 for (i in 0 until n) {
+                    // Only where the Combined sweep was measured, as on the Checks page.
+                    if (f[i] !in r.coverageHz) continue
                     num += (c.re[i] - sumBefore.re[i]).let { it * it } + (c.im[i] - sumBefore.im[i]).let { it * it }
                     den += c.re[i] * c.re[i] + c.im[i] * c.im[i]
                 }

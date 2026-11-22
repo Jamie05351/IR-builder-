@@ -244,7 +244,7 @@ class BandLimitedAndPartialSetsTest {
         val a = AlignOptions(JdspTiming(BandSetting(2.0), BandSetting(2.0)))
         val c = Checks.run(set, CheckScope.bandAlign(a))
         assertTrue(c.canDesign)
-        assertTrue(c.items.any { it.severity == Severity.WARNING && it.title.contains("Right side not aligned") })
+        assertTrue(c.items.any { it.severity == Severity.WARNING && it.title.contains("Right side: no Low/Mid") })
         assertTrue(c.items.any { it.severity == Severity.WARNING && it.title.contains("Driver seat only") })
         val r = BandAlign.solve(set, a)
         assertTrue(r.results.all { it.channel == Channel.L })
@@ -258,5 +258,49 @@ class BandLimitedAndPartialSetsTest {
         val c = Checks.run(MeasurementSet.load(ms, DesignOptions()), CheckScope.bandAlign(AlignOptions()))
         assertFalse(c.canDesign)
         assertTrue(c.items.any { it.title == "Nothing to align" })
+    }
+}
+
+class PerPairAndCombinedCoverageTest {
+    @Test
+    fun eachPairCountsPositionsThatHaveItsTwoBands() {
+        // Low/Mid sweeps at one position, Mid/High at another: both pairs can run.
+        val dir = kotlin.io.path.createTempDirectory("irb").toFile()
+        val ms = ArrayList<Measurement>()
+        for (seat in Seat.entries) for (ch in Channel.entries) {
+            for ((pos, bands) in listOf("a" to listOf(Band.LOW, Band.MID), "b" to listOf(Band.MID, Band.HIGH))) for (b in bands) {
+                val file = java.io.File(dir, "${seat.name}_${pos}_${ch.name}_${b.fileName}.txt")
+                Fixtures.writeRew(file, { f -> Fixtures.band(b, f, delaySeconds = if (b == Band.LOW) 0.0015 else 0.0) })
+                ms += Measurement(file.path, seat, pos, ch, b, if (ch == Channel.L) "R" else "L")
+            }
+        }
+        val set = MeasurementSet.load(ms, DesignOptions())
+        val a = AlignOptions(JdspTiming(BandSetting(2.0), BandSetting(2.0), highL = BandSetting(1.0), highR = BandSetting(1.0)))
+        val c = Checks.run(set, CheckScope.bandAlign(a))
+        assertTrue(c.canDesign, c.items.filter { it.severity == Severity.ERROR }.joinToString { it.title })
+        assertTrue(c.items.any { it.title.contains("not used for Mid/High") })
+        val r = BandAlign.solve(set, a)
+        assertEquals(4, r.results.size)
+        assertTrue(r.results.filter { it.pair == AlignPair.LOW_MID }.all { res -> res.positions.all { it.key.position == "a" } })
+        assertTrue(r.results.filter { it.pair == AlignPair.MID_HIGH }.all { res -> res.positions.all { it.key.position == "b" } })
+    }
+
+    @Test
+    fun aBandLimitedCombinedSweepIsOnlyComparedWhereItWasMeasured() {
+        val dir = kotlin.io.path.createTempDirectory("irb").toFile()
+        val ms = ArrayList<Measurement>()
+        for (seat in Seat.entries) for (ch in Channel.entries) {
+            for (b in Band.BRANCHES) {
+                val file = java.io.File(dir, "${seat.name}_c_${ch.name}_${b.fileName}.txt")
+                Fixtures.writeRew(file, { f -> Fixtures.band(b, f) })
+                ms += Measurement(file.path, seat, "c", ch, b, "ref-${ch.name}")
+            }
+            val file = java.io.File(dir, "${seat.name}_c_${ch.name}_combined.txt")
+            Fixtures.writeRew(file, { f -> Band.BRANCHES.map { b -> Fixtures.band(b, f) }.reduce { x, y -> x + y } }, minHz = 70.0, maxHz = 8000.0)
+            ms += Measurement(file.path, seat, "c", ch, Band.COMBINED, "ref-${ch.name}")
+        }
+        val d = Designer.design(MeasurementSet.load(ms, DesignOptions(taps = 8192, latencyFrames = 4096)))
+        d.report.positions.forEach { assertTrue((it.combinedVsBranchSumRelativeError ?: 1.0) < 0.05, "${it.combinedVsBranchSumRelativeError}") }
+        assertTrue(d.report.warnings.none { it.contains("combined sweep disagrees") })
     }
 }
