@@ -21,7 +21,9 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Exe)
             packageName = "JDSP-IR-Builder"
-            packageVersion = "1.0.0"
+            // Each CI build passes a higher version (1.1.<run number>) so the installer upgrades the
+            // installed copy in place; Windows only treats a higher version as an upgrade.
+            packageVersion = (findProperty("appVersion") as String?) ?: "1.0.0"
             description = "Multi-seat Low/Mid/High correction IR designer for J_DSP"
             vendor = "J_DSP"
             windows {

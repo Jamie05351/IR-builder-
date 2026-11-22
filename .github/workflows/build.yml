@@ -39,7 +39,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
       - name: Build .exe installer and portable app
         shell: pwsh
-        run: ./gradlew.bat --no-daemon :desktop:packageExe :desktop:createDistributable
+        run: ./gradlew.bat --no-daemon "-PappVersion=1.1.${{ github.run_number }}" :desktop:packageExe :desktop:createDistributable
       - name: Zip portable app
         shell: pwsh
         run: Compress-Archive -Path desktop/build/compose/binaries/main/app/JDSP-IR-Builder -DestinationPath JDSP-IR-Builder-portable.zip
