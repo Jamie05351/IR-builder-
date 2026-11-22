@@ -205,7 +205,7 @@ class AppState(private var scope: CoroutineScope) {
     }
 
     /** What the current tool requires of the measurements. */
-    fun checkScope(): CheckScope = if (tool == Tool.BAND_ALIGN) CheckScope.bandAlign(align) else CheckScope.PHASE_IRS
+    fun checkScope(): CheckScope = if (tool == Tool.BAND_ALIGN) CheckScope.bandAlign(align, measurements.toList()) else CheckScope.PHASE_IRS
 
     /**
      * Installs a freshly loaded set. Results computed from a different load (e.g. files re-exported
@@ -226,7 +226,7 @@ class AppState(private var scope: CoroutineScope) {
         val o = options
         val a = align
         val (s, c, r) = withContext(Dispatchers.Default) {
-            val (s, c) = loadAndCheck(snapshot, o, CheckScope.bandAlign(a))
+            val (s, c) = loadAndCheck(snapshot, o, CheckScope.bandAlign(a, snapshot))
             Triple(s, c, if (c.canDesign) BandAlign.solve(s, a) else null)
         }
         if (inputsChangedSince(snapshot, o, a)) {

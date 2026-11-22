@@ -338,3 +338,37 @@ class CoverageInUseTest {
         assertTrue(MeasurementSet.load(ms, DesignOptions()).loadErrors.any { it.measurement.band == Band.MID })
     }
 }
+
+class MissingPairBandTest {
+    @Test
+    fun aPairWithNoSweepsForItsBandIsLeftOutAndDoesNotStretchMid() {
+        // Low and Mid only, both pairs switched on: Mid/High is skipped, so Mid needs 75-300 Hz, not 7 kHz.
+        val dir = kotlin.io.path.createTempDirectory("irb").toFile()
+        val ms = ArrayList<Measurement>()
+        for (ch in Channel.entries) for ((b, hi) in listOf(Band.LOW to 500.0, Band.MID to 500.0)) {
+            val file = java.io.File(dir, "driver_centre_${ch.name}_${b.fileName}.txt")
+            Fixtures.writeRew(file, { f -> Fixtures.band(b, f, delaySeconds = if (b == Band.LOW) 0.0015 else 0.0) }, minHz = 15.0, maxHz = hi)
+            ms += Measurement(file.path, Seat.DRIVER, "centre", ch, b, if (ch == Channel.L) "R" else "L")
+        }
+        val a = AlignOptions(JdspTiming(BandSetting(2.0), BandSetting(2.0)), lowMid = true, midHigh = true)
+        val scope = CheckScope.bandAlign(a, ms)
+        assertEquals(setOf(Crossover.LOW_MID), scope.crossovers.toSet())
+        val set = MeasurementSet.load(ms, DesignOptions(), scope.crossovers.toSet())
+        assertTrue(set.loadErrors.isEmpty(), set.loadErrors.joinToString { it.message })
+        val c = Checks.run(set, scope)
+        assertTrue(c.canDesign, c.items.filter { it.severity == Severity.ERROR }.joinToString { it.title })
+        assertTrue(c.items.any { it.severity == Severity.WARNING && it.title.startsWith("Mid/High: no High sweeps") })
+        assertTrue(BandAlign.solve(set, a).results.all { it.pair == AlignPair.LOW_MID && it.proposal != null })
+    }
+
+    @Test
+    fun aMidSweepStartingAbove75HzIsStillRefusedForLowMid() {
+        // J_DSP's rule: Mid must start an octave below its 150 Hz high-pass, so the overlap with Low is in it.
+        val dir = kotlin.io.path.createTempDirectory("irb").toFile()
+        val file = java.io.File(dir, "mid.txt")
+        Fixtures.writeRew(file, { f -> Fixtures.band(Band.MID, f) }, minHz = 100.0, maxHz = 500.0)
+        val m = Measurement(file.path, Seat.DRIVER, "c", Channel.L, Band.MID, "R")
+        val set = MeasurementSet.load(listOf(m), DesignOptions(), setOf(Crossover.LOW_MID))
+        assertTrue(set.loadErrors.single().message.contains("75–300 Hz"), set.loadErrors.single().message)
+    }
+}

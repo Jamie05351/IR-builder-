@@ -49,6 +49,8 @@ data class CheckScope(
     val units: List<Pair<String, Set<Band>>>,
     val strict: Boolean,
     val purpose: String,
+    /** Enabled jobs left out because not one file has the band they move (e.g. no High sweeps). */
+    val skipped: List<String> = emptyList(),
 ) {
     val requiredBands: Set<Band> get() = units.flatMap { it.second }.toSet()
     val crossovers: List<Crossover> get() = Crossover.entries.filter { xo -> units.any { xo.lower in it.second && xo.upper in it.second } }
@@ -56,12 +58,20 @@ data class CheckScope(
     companion object {
         val PHASE_IRS = CheckScope(listOf("the Phase IRs" to Band.BRANCHES.toSet()), strict = true, purpose = "the Phase IRs")
 
-        /** One unit per enabled pair, so a position with only one pair's bands still counts for that pair. */
-        fun bandAlign(a: AlignOptions) = CheckScope(
-            AlignPair.entries.filter { if (it == AlignPair.LOW_MID) a.lowMid else a.midHigh }
-                .map { "${it.label} Band Align" to setOf(it.moving, Band.MID) },
-            strict = false, purpose = "Band Align",
-        )
+        /**
+         * One unit per enabled pair, so a position with only one pair's bands still counts for that
+         * pair. Given the [measurements], an enabled pair whose moving band has no files at all is
+         * left out (and reported), so it doesn't impose its crossover's coverage on Mid.
+         */
+        fun bandAlign(a: AlignOptions, measurements: List<Measurement>? = null): CheckScope {
+            val enabled = AlignPair.entries.filter { if (it == AlignPair.LOW_MID) a.lowMid else a.midHigh }
+            val (used, skipped) = enabled.partition { p -> measurements == null || measurements.any { it.band == p.moving } }
+            return CheckScope(
+                used.map { "${it.label} Band Align" to setOf(it.moving, Band.MID) },
+                strict = false, purpose = "Band Align",
+                skipped = skipped.map { "${it.label}: no ${it.moving.label} sweeps" },
+            )
+        }
     }
 }
 
@@ -86,9 +96,10 @@ object Checks {
             err("No measurements", "Import software-band-solo sweeps for ${scope.purpose}.")
             return CheckResult(items, emptyList())
         }
+        for (s in scope.skipped) warn("$s, so it isn't aligned", "Switch that pair off on the Band Align page, or import its sweeps.")
         if (scope.requiredBands.isEmpty()) {
-            err("Nothing to align", "Switch on Low against Mid, High against Mid, or both.")
-            return CheckResult(items, emptyList())
+            err("Nothing to align", if (scope.skipped.isEmpty()) "Switch on Low against Mid, High against Mid, or both." else "None of the switched-on pairs has sweeps for its bands.")
+            return CheckResult(items.sortedBy { it.severity.ordinal }, emptyList())
         }
         for (e in set.loadErrors) err("Cannot use ${MeasurementSet.fileName(e.measurement)}", e.message)
 
