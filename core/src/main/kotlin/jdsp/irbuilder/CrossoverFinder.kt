@@ -308,8 +308,11 @@ class FinderReport(
  *
  * Each candidate is scored against a flat-sum target: for each position, the level the bands
  * would give summed perfectly in phase through the current filters, sqrt(Σ|H_b|² / Σ|X_b|²). Its
- * band sum, power-smoothed ±1/24 octave, is compared with the target over the crossover region:
- * peaks count once, dips double (a dip is cancellation that EQ can't fill). The improvement over
+ * band sum's ratio to the target is taken per point, then smoothed ±1/24 octave (smoothing first
+ * would draw false dips at steep slopes), and scored over the crossover region where the sweeps
+ * aren't noise floors: peaks count once, dips double (cancellation, or a gap between the bands,
+ * which EQ can't fill). Unlike sum loss alone this also sees a gap. Sum loss is reported too. A
+ * flipped polarity must win by [BandAlign.POLARITY_MARGIN_DB]. The improvement over
  * the current setting is averaged per seat; a candidate that leaves any seat worse is rejected, and
  * the winner must be at least [MIN_IMPROVEMENT_DB] better. Delay and polarity per side are searched
  * with each candidate like Band Align (0–2.8 ms, 0.01 ms steps), since a new filter shifts the
@@ -371,6 +374,8 @@ object CrossoverFinder {
         val covered: Map<Band, BooleanArray>,
         val measured: Map<Band, DoubleArray>,
         val peak: Map<Band, Double>,
+        /** Points worth scoring: not two noise floors (see [SumLoss.valid]). */
+        val valid: BooleanArray,
     )
 
     private class Cand(val lower: XoFilter, val upper: XoFilter, val lowerIdx: Int, val upperIdx: Int)
@@ -423,7 +428,7 @@ object CrossoverFinder {
                 val covered = present.associateWith { b -> val c = g.responses.getValue(b).coverageHz; BooleanArray(n) { freqs[it] >= c.start * 0.9999 && freqs[it] <= c.endInclusive * 1.0001 } }
                 val trustLevel = Math.pow(10.0, TRUST_DB / 20)
                 val trusted = present.associateWith { b -> BooleanArray(n) { covered.getValue(b)[it] && measured.getValue(b)[it] >= peak.getValue(b) * trustLevel } }
-                Pos(g.key, g.validationOnly, bands, target, trusted, covered, measured, peak)
+                Pos(g.key, g.validationOnly, bands, target, trusted, covered, measured, peak, SumLoss.valid(present.map { g.branch(it) }, freqs))
             }
         }
 
@@ -512,12 +517,13 @@ object CrossoverFinder {
             }
         }
 
-        fun penalty(sum: DoubleArray, target: DoubleArray, g: Grid, exact: Boolean): Double {
+        // [ratio]: the sum's power over the target's, already smoothed; scored where [mask] holds.
+        fun penalty(ratio: DoubleArray, mask: BooleanArray, exact: Boolean): Double {
             var acc = 0.0
             var k = 0
-            for (i in sum.indices) if (g.inBand[i]) {
-                val ratio = sum[i] / max(target[i], 1e-30)
-                val d = 10 * (if (exact) log10(max(ratio, 1e-30)) else fastLog10(max(ratio, 1e-30)))
+            for (i in ratio.indices) if (mask[i]) {
+                val r = max(ratio[i], 1e-30)
+                val d = 10 * (if (exact) log10(r) else fastLog10(r))
                 acc += if (d > 0) d else -2 * d
                 k++
             }
@@ -536,7 +542,9 @@ object CrossoverFinder {
         }
 
         class Ctx(val g: Grid, val delays: Map<Channel, List<BandSetting>>, val cs: Map<Channel, Array<DoubleArray>>, val sn: Map<Channel, Array<DoubleArray>>,
-                  val targets: Map<Channel, List<DoubleArray>>, val before: Map<Channel, List<Double>>, val exact: Boolean)
+                  /** Per position: 1 / target on the grid, where its points are valid, and where they're scored. */
+                  val inv: Map<Channel, List<DoubleArray>>, val valid: Map<Channel, List<BooleanArray>>, val scored: Map<Channel, List<BooleanArray>>,
+                  val before: Map<Channel, List<Double>>, val exact: Boolean)
 
         fun sumPower(p: Pos, lo: SlotCand, up: SlotCand, idx: IntArray): Triple<DoubleArray, DoubleArray, DoubleArray> {
             // a = everything that doesn't move, b = the moving band; power = |a|²+|b|² + 2·Re(conj(a)·b·e^{-jθ}).
@@ -570,14 +578,18 @@ object CrossoverFinder {
                 cs[ch] = Array(ds.size) { k -> DoubleArray(g.idx.size) { j -> cos(2 * PI * freqs[g.idx[j]] * (ds[k].delayMs - cur) / 1000.0) } }
                 sn[ch] = Array(ds.size) { k -> DoubleArray(g.idx.size) { j -> sin(2 * PI * freqs[g.idx[j]] * (ds[k].delayMs - cur) / 1000.0) } }
             }
-            val targets = pos.mapValues { (_, ps) -> ps.map { p -> smooth(DoubleArray(g.idx.size) { p.target[g.idx[it]] }, g.half) } }
+            // The ratio to the target is taken per point and smoothed after (see SumLoss).
+            val inv = pos.mapValues { (_, ps) -> ps.map { p -> DoubleArray(g.idx.size) { 1.0 / max(p.target[g.idx[it]], 1e-30) } } }
+            val valid = pos.mapValues { (_, ps) -> ps.map { p -> BooleanArray(g.idx.size) { p.valid[g.idx[it]] } } }
+            val scored = pos.mapValues { (ch, ps) -> ps.indices.map { pi -> BooleanArray(g.idx.size) { g.inBand[it] && valid.getValue(ch)[pi][it] } } }
             val before = pos.mapValues { (ch, ps) ->
                 ps.mapIndexed { pi, p ->
                     val (aa, cr, _) = sumPower(p, current.first, current.second, g.idx)
-                    penalty(smooth(DoubleArray(aa.size) { aa[it] + 2 * cr[it] }, g.half), targets.getValue(ch)[pi], g, exact)
+                    val iv = inv.getValue(ch)[pi]
+                    penalty(SumLoss.smooth(DoubleArray(aa.size) { (aa[it] + 2 * cr[it]) * iv[it] }, valid.getValue(ch)[pi], g.half), scored.getValue(ch)[pi], exact)
                 }
             }
-            return Ctx(g, delays, cs, sn, targets, before, exact)
+            return Ctx(g, delays, cs, sn, inv, valid, scored, before, exact)
         }
 
         // Seat-weighted improvement for one channel, NaN if a seat gets worse.
@@ -609,8 +621,9 @@ object CrossoverFinder {
                 val m = ctx.g.idx.size
                 val buf = DoubleArray(m)
                 val imps = DoubleArray(ps.size)
-                var best = Double.NaN
-                var bestSetting: BandSetting? = null
+                // Best keeping the polarity, and best flipping it: a flip must win clearly.
+                var bestSame: Pair<BandSetting, Double>? = null
+                var bestFlip: Pair<BandSetting, Double>? = null
                 for (k in ds.indices) {
                     val sign = if (ds[k].inverted != cur.inverted) -2.0 else 2.0
                     for (pi in ps.indices) {
@@ -618,15 +631,23 @@ object CrossoverFinder {
                         val (aa, cr, ci) = parts[pi]
                         val ck = cs[k]
                         val sk = sn[k]
-                        for (j in 0 until m) buf[j] = aa[j] + sign * (cr[j] * ck[j] + ci[j] * sk[j])
-                        imps[pi] = ctx.before.getValue(ch)[pi] - penalty(smooth(buf, ctx.g.half), ctx.targets.getValue(ch)[pi], ctx.g, ctx.exact)
+                        val iv = ctx.inv.getValue(ch)[pi]
+                        for (j in 0 until m) buf[j] = (aa[j] + sign * (cr[j] * ck[j] + ci[j] * sk[j])) * iv[j]
+                        imps[pi] = ctx.before.getValue(ch)[pi] - penalty(SumLoss.smooth(buf, ctx.valid.getValue(ch)[pi], ctx.g.half), ctx.scored.getValue(ch)[pi], ctx.exact)
                     }
                     val sc = channelScore(ch, imps)
-                    if (sc.isFinite() && (bestSetting == null || sc > best + 1e-9)) { best = sc; bestSetting = ds[k] }
+                    if (!sc.isFinite()) continue
+                    if (ds[k].inverted == cur.inverted) { if (bestSame == null || sc > bestSame.second + 1e-9) bestSame = ds[k] to sc }
+                    else if (bestFlip == null || sc > bestFlip.second + 1e-9) bestFlip = ds[k] to sc
                 }
-                if (bestSetting == null) return null
-                total += best
-                chosen[ch] = bestSetting
+                val pick = when {
+                    bestFlip == null -> bestSame
+                    bestSame == null -> bestFlip.takeIf { it.second >= BandAlign.POLARITY_MARGIN_DB }
+                    bestFlip.second >= bestSame.second + BandAlign.POLARITY_MARGIN_DB -> bestFlip
+                    else -> bestSame
+                } ?: return null
+                total += pick.second
+                chosen[ch] = pick.first
             }
             return Eval(Cand(c.first.filter, c.second.filter, c.first.k, c.second.k), total / channels.size, chosen)
         }
@@ -671,29 +692,48 @@ object CrossoverFinder {
             val ps = pos.getValue(ch)
             val cur = timing.get(moving, ch)
             val setting = accepted.delays.getValue(ch)
-            fun curve(p: Pos, c: Pair<SlotCand, SlotCand>, s: BandSetting): DoubleArray {
+            fun power(p: Pos, c: Pair<SlotCand, SlotCand>, s: BandSetting): DoubleArray {
                 val (aa, cr, ci) = sumPower(p, c.first, c.second, full.idx)
                 val sign = if (s.inverted != cur.inverted) -2.0 else 2.0
                 val dt = (s.delayMs - cur.delayMs) / 1000.0
-                return smooth(DoubleArray(n) { j -> val th = 2 * PI * freqs[j] * dt; aa[j] + sign * (cr[j] * cos(th) + ci[j] * sin(th)) }, full.half)
+                return DoubleArray(n) { j -> val th = 2 * PI * freqs[j] * dt; aa[j] + sign * (cr[j] * cos(th) + ci[j] * sin(th)) }
             }
-            val before = ps.map { curve(it, current, cur) }
-            val after = ps.map { curve(it, accPair, setting) }
+            // Each band as it would play, for the sum-loss readout.
+            fun bands(p: Pos, c: Pair<SlotCand, SlotCand>, s: BandSetting): List<CVec> {
+                val midRatio = if (xo == Crossover.LOW_MID) c.second.ratio else c.first.ratio
+                val movRatio = if (xo == Crossover.LOW_MID) c.first.ratio else c.second.ratio
+                val mov = shift(p.bands.getValue(moving).times(movRatio), freqs, (s.delayMs - cur.delayMs) / 1000.0, if (s.inverted != cur.inverted) -1.0 else 1.0)
+                return listOf(p.bands.getValue(other), p.bands.getValue(Band.MID).times(midRatio), mov)
+            }
+            fun score(p: Pos, pw: DoubleArray): Double {
+                val r = SumLoss.smooth(DoubleArray(n) { pw[it] / max(p.target[it], 1e-30) }, p.valid, full.half)
+                return penalty(r, BooleanArray(n) { full.inBand[it] && p.valid[it] }, true)
+            }
+            val beforeP = ps.map { power(it, current, cur) }
+            val afterP = ps.map { power(it, accPair, setting) }
+            val before = beforeP.map { smooth(it, full.half) }
+            val after = afterP.map { smooth(it, full.half) }
             val targets = ps.map { smooth(it.target, full.half) }
-            val imps = DoubleArray(ps.size) { penalty(before[it], targets[it], full, true) - penalty(after[it], targets[it], full, true) }
+            val imps = DoubleArray(ps.size) { score(ps[it], beforeP[it]) - score(ps[it], afterP[it]) }
+            val lossBefore = ps.map { SumLoss.read(bands(it, current, cur), freqs, band) }
+            val lossAfter = ps.map { SumLoss.read(bands(it, accPair, setting), freqs, band) }
             val design = ps.indices.filter { !ps[it].validationOnly }
             val seats = Seat.entries.filter { s -> design.any { ps[it].key.seat == s } }
             fun seatDb(seat: Seat, v: List<DoubleArray>): DoubleArray {
                 val idx = design.filter { ps[it].key.seat == seat }
                 return DoubleArray(n) { i -> 10 * log10(max(idx.sumOf { v[it][i] } / idx.size, 1e-30)) }
             }
+            fun seatLoss(seat: Seat, rs: List<SumLoss.Reading?>): SumLoss.Reading? {
+                val got = design.filter { ps[it].key.seat == seat }.mapNotNull { rs[it] }
+                return if (got.isEmpty()) null else SumLoss.Reading(got.sumOf { it.averageDb } / got.size, got.sumOf { it.worstDb } / got.size)
+            }
             val ds = delayCandidates(ch, BandAlign.DELAY_STEP_MS)
             FinderChannel(
                 channel = ch, moving = moving, current = cur, proposed = setting,
                 scoreDb = channelScore(ch, imps).let { if (it.isFinite()) it.round(2) else 0.0 },
-                seats = seats.map { AlignSeatCurve(it, design.count { i -> ps[i].key.seat == it }, seatDb(it, before), seatDb(it, after)) },
+                seats = seats.map { AlignSeatCurve(it, design.count { i -> ps[i].key.seat == it }, seatDb(it, before), seatDb(it, after), seatLoss(it, lossBefore), seatLoss(it, lossAfter)) },
                 targetDb = seats.map { seatDb(it, targets) },
-                positions = ps.indices.map { AlignPositionScore(ps[it].key, ps[it].validationOnly, imps[it].round(2)) },
+                positions = ps.indices.map { AlignPositionScore(ps[it].key, ps[it].validationOnly, imps[it].round(2), lossBefore[it], lossAfter[it]) },
                 delayAtLimit = setting != cur && (setting.delayMs <= ds.minOf { it.delayMs } + 1e-6 || setting.delayMs >= BandAlign.DELAY_MAX_MS - 1e-6),
             )
         }

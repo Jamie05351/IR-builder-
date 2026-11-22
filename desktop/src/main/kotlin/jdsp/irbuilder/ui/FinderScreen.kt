@@ -181,6 +181,7 @@ private fun FinderResultPanel(res: FinderResult, freqs: DoubleArray) {
                 Color.White)
             if (c.delayAtLimit) Note("${c.channel.label}: the best delay is at the end of J_DSP's range; it may want more.", Jdsp.MidYellow)
         }
+        res.channels.forEach { c -> c.seats.forEach { s -> lossText(s.lossBefore, s.lossAfter)?.let { Note("${c.channel.label} · ${s.seat.label}: $it", Color.White) } } }
         if (res.atSearchEdge.isNotEmpty()) Note("${res.atSearchEdge.joinToString { it.label }} ended at the edge of what was searched (your limit, J_DSP's range or an octave). Widen the limit only if the speaker can take it.", Jdsp.MidYellow)
         if (res.unreliable > 0) Note("${res.unreliable} candidate(s) left out because they'd rely on parts of a sweep that are too quiet or weren't swept.")
         res.channels.forEach { c ->

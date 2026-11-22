@@ -62,10 +62,20 @@ enum class AlignPair(val label: String, val moving: Band, val crossover: Crossov
 }
 
 /** A seat's power-averaged band sum over its positions, smoothed, dB on the design grid. */
-class AlignSeatCurve(val seat: Seat, val positions: Int, val beforeDb: DoubleArray, val afterDb: DoubleArray)
+class AlignSeatCurve(
+    val seat: Seat, val positions: Int, val beforeDb: DoubleArray, val afterDb: DoubleArray,
+    /** The seat's mean sum loss over the scored band, before and after (average and worst dip). */
+    val lossBefore: SumLoss.Reading? = null, val lossAfter: SumLoss.Reading? = null,
+)
 
-/** Mean change in the scored band at one position, dB (cuts counted double). */
-data class AlignPositionScore(val key: GroupKey, val validationOnly: Boolean, val scoreDb: Double)
+/**
+ * One position's result: [scoreDb] is the improvement in average sum loss over the scored band
+ * (Band Align) or the target score (Crossover Finder); the sum-loss readings are before and after.
+ */
+data class AlignPositionScore(
+    val key: GroupKey, val validationOnly: Boolean, val scoreDb: Double,
+    val lossBefore: SumLoss.Reading? = null, val lossAfter: SumLoss.Reading? = null,
+)
 
 class AlignResult(
     val channel: Channel,
@@ -73,7 +83,7 @@ class AlignResult(
     val current: BandSetting,
     /** Null when nothing in range beats the current setting by [BandAlign.MIN_IMPROVEMENT_DB]. */
     val proposal: BandSetting?,
-    /** Seat-weighted mean change over the scored band, dB (cuts counted double). */
+    /** Seat-weighted improvement in average sum loss over the scored band, dB. */
     val scoreDb: Double,
     val bandHz: ClosedFloatingPointRange<Double>,
     val seats: List<AlignSeatCurve>,
@@ -102,14 +112,17 @@ class BandAlignReport(
 }
 
 /**
- * Band Align, ported from J_DSP (`dsp/bandalign/BandAlignSolver.kt`) and extended: per side, the
+ * Band Align, ported from J_DSP (`dsp/bandalign/BandAlignSolver.kt`) and extended, now scored by
+ * sum loss ([SumLoss]) rather than J_DSP's level change: per side, the
  * delay and polarity of Low against Mid (scored around the Low/Mid crossover) and of High against
  * Mid (around Mid/High) that make the bands add up best at every seat together.
  *
  * Measurements are taken through the tune as it is, so a candidate is just the measured band
  * moved by the difference from the current setting: an exact time shift and sign, no crossover
- * model. Each candidate's three-band sum is power-smoothed over ±1/24 octave and scored over the
- * crossover region with cuts counted double, per position then per seat. A candidate that leaves
+ * model. Each candidate's sum loss (|ΣH| / Σ|H|, smoothed ±1/24 octave after the ratio, noise
+ * floors gated out) is averaged over the crossover region, per position then per seat; a
+ * candidate's score is how much it reduces that loss. Level alone would reward a +3 dB bump as
+ * much as filling a dip; sum loss counts only cancellation. A candidate that leaves
  * any seat worse off is rejected, so one seat is never traded for another. Delays run 0–2.8 ms in
  * 0.01 ms steps (J_DSP's Gains & Delay range), and below 0 as far as the other delays leave room:
  * a negative answer becomes 0 with every other delay made later by the same amount.
@@ -117,7 +130,16 @@ class BandAlignReport(
 object BandAlign {
     const val DELAY_MAX_MS = 2.8
     const val DELAY_STEP_MS = 0.01
-    const val MIN_IMPROVEMENT_DB = 0.5
+    /** Least improvement in seat-weighted average sum loss worth proposing, dB. */
+    const val MIN_IMPROVEMENT_DB = 0.2
+
+    /**
+     * A flipped polarity must beat the best keeping it by this much (dB of average sum loss).
+     * Inverted and half a period off scores within noise of the true alignment at a crossover,
+     * and reflections tip it (Resonalyze's lobe/polarity rule); without a clear margin the
+     * polarity the filters expect stays.
+     */
+    const val POLARITY_MARGIN_DB = 0.5
 
     /** The scored region: 2.5× below to 2.5× above the crossover, within the design grid. */
     fun scoreBand(xoHz: Double, freqs: DoubleArray) = maxOf(xoHz / 2.5, freqs.first())..minOf(xoHz * 2.5, freqs.last())
@@ -213,13 +235,18 @@ object BandAlign {
         val movingBranch = groups.map { it.branch(pair.moving) }
         val ppo = (n - 1) / log2(f.last() / f.first())
         val half = (ppo / 24.0).toInt().coerceAtLeast(1)
+        // The in-phase amplitude sum doesn't depend on delay or polarity: one per position.
+        val bandsAt = groups.map { g -> Band.BRANCHES.map { g.branch(it) } }
+        val amp2 = bandsAt.map { bs -> DoubleArray(n) { i -> bs.sumOf { it.abs(i) }.let { it * it } } }
+        val valid = bandsAt.map { SumLoss.valid(it, f) }
+        val lossHalf = SumLoss.halfWidth(f)
 
-        fun sumDb(gi: Int, s: BandSetting): DoubleArray {
+        fun power(gi: Int, s: BandSetting): DoubleArray {
             val dt = (s.delayMs - current.delayMs) / 1000.0
             val sign = if (s.inverted != current.inverted) -1.0 else 1.0
             val h = movingBranch[gi]
             val r = rest[gi]
-            val power = DoubleArray(n) { i ->
+            return DoubleArray(n) { i ->
                 val a = -2 * PI * f[i] * dt
                 val c = cos(a) * sign
                 val sn = sin(a) * sign
@@ -227,6 +254,25 @@ object BandAlign {
                 val im = h.re[i] * sn + h.im[i] * c + r.im[i]
                 re * re + im * im
             }
+        }
+
+        /** The position's smoothed sum-loss curve for setting [s], dB (NaN where gated). */
+        fun lossCurve(gi: Int, s: BandSetting): DoubleArray {
+            val p = power(gi, s)
+            val r = DoubleArray(n) { i -> if (amp2[gi][i] > 0) p[i] / amp2[gi][i] else 1.0 }
+            val sm = SumLoss.smooth(r, valid[gi], lossHalf)
+            return DoubleArray(n) { i -> if (valid[gi][i]) 10 * log10(sm[i].coerceAtLeast(1e-12)) else Double.NaN }
+        }
+
+        fun averageLoss(curve: DoubleArray): Double {
+            var sum = 0.0
+            var k = 0
+            for (i in 0 until n) if (inBand[i] && !curve[i].isNaN()) { sum += curve[i]; k++ }
+            return if (k > 0) sum / k else 0.0
+        }
+
+        fun sumDb(gi: Int, s: BandSetting): DoubleArray {
+            val power = power(gi, s)
             return DoubleArray(n) { i ->
                 var acc = 0.0
                 var k = 0
@@ -235,17 +281,9 @@ object BandAlign {
             }
         }
 
-        val before = groups.indices.map { sumDb(it, current) }
-        fun positionScore(gi: Int, after: DoubleArray): Double {
-            var sum = 0.0
-            var k = 0
-            for (i in 0 until n) if (inBand[i]) {
-                val d = after[i] - before[gi][i]
-                sum += if (d > 0) d else 2 * d
-                k++
-            }
-            return if (k > 0) sum / k else 0.0
-        }
+        val beforeLoss = groups.indices.map { lossCurve(it, current) }
+        val beforeAvg = beforeLoss.map { averageLoss(it) }
+        fun positionScore(gi: Int, after: DoubleArray): Double = averageLoss(after) - beforeAvg[gi]
         val design = groups.indices.filter { !groups[it].validationOnly }
         val seats = Seat.entries.filter { s -> design.any { groups[it].key.seat == s } }
         fun score(after: List<DoubleArray>): Double {
@@ -271,15 +309,31 @@ object BandAlign {
             for (k in firstStep..steps) for (inv in listOf(current.inverted, !current.inverted)) add(BandSetting((k * DELAY_STEP_MS).roundTo(DELAY_STEP_MS), inv))
         }.sortedBy { abs(it.delayMs - current.delayMs) + if (it.inverted != current.inverted) 1e-6 else 0.0 }
 
-        var best: Pair<BandSetting, Double>? = null
+        var bestSame: Pair<BandSetting, Double>? = null
+        var bestFlip: Pair<BandSetting, Double>? = null
         for (c in candidates) {
-            val after = groups.indices.map { sumDb(it, c) }
+            val after = groups.indices.map { lossCurve(it, c) }
             val sc = score(after)
-            if (sc.isFinite() && (best == null || sc > best.second + 1e-9)) best = c to sc
+            if (!sc.isFinite()) continue
+            if (c.inverted == current.inverted) { if (bestSame == null || sc > bestSame.second + 1e-9) bestSame = c to sc }
+            else if (bestFlip == null || sc > bestFlip.second + 1e-9) bestFlip = c to sc
+        }
+        val best = when {
+            bestFlip == null -> bestSame
+            bestSame == null -> bestFlip.takeIf { it.second >= POLARITY_MARGIN_DB }
+            bestFlip.second >= bestSame.second + POLARITY_MARGIN_DB -> bestFlip
+            else -> bestSame
         }
         val winner = best?.takeIf { it.second >= MIN_IMPROVEMENT_DB && it.first != current }
         val chosen = winner?.first ?: current
+        val afterLoss = groups.indices.map { lossCurve(it, chosen) }
+        val before = groups.indices.map { sumDb(it, current) }
         val after = groups.indices.map { sumDb(it, chosen) }
+        fun reading(c: DoubleArray) = SumLoss.readCurve(c, f, band)
+        fun seatLoss(seat: Seat, curves: List<DoubleArray>): SumLoss.Reading? {
+            val rs = design.filter { groups[it].key.seat == seat }.mapNotNull { reading(curves[it]) }
+            return if (rs.isEmpty()) null else SumLoss.Reading(rs.sumOf { it.averageDb } / rs.size, rs.sumOf { it.worstDb } / rs.size)
+        }
         fun seatCurve(seat: Seat, values: List<DoubleArray>): DoubleArray {
             val idx = design.filter { groups[it].key.seat == seat }
             return DoubleArray(n) { i -> 10 * log10(idx.map { Math.pow(10.0, values[it][i] / 10) }.average()) }
@@ -287,8 +341,8 @@ object BandAlign {
         return AlignResult(
             channel = ch, pair = pair, current = current, proposal = winner?.first,
             scoreDb = winner?.second ?: 0.0, bandHz = band,
-            seats = seats.map { s -> AlignSeatCurve(s, design.count { groups[it].key.seat == s }, seatCurve(s, before), seatCurve(s, after)) },
-            positions = groups.indices.map { AlignPositionScore(groups[it].key, groups[it].validationOnly, positionScore(it, after[it]).round(2)) },
+            seats = seats.map { s -> AlignSeatCurve(s, design.count { groups[it].key.seat == s }, seatCurve(s, before), seatCurve(s, after), seatLoss(s, beforeLoss), seatLoss(s, afterLoss)) },
+            positions = groups.indices.map { AlignPositionScore(groups[it].key, groups[it].validationOnly, positionScore(it, afterLoss[it]).round(2), reading(beforeLoss[it]), reading(afterLoss[it])) },
             atRangeLimit = winner != null && (winner.first.delayMs <= minDelay + 1e-6 || winner.first.delayMs >= DELAY_MAX_MS - 1e-6),
         )
     }

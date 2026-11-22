@@ -235,6 +235,12 @@ fun Chip(text: String, selected: Boolean, onClick: () -> Unit, accent: Color = J
 @Composable
 fun Note(text: String, color: Color = Jdsp.TextDim) = Text(text, color = color, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.fillMaxWidth())
 
+/** "Sum loss −1.2 → −0.4 dB, worst dip −6.0 → −2.1 dB" for a seat. */
+fun lossText(before: jdsp.irbuilder.SumLoss.Reading?, after: jdsp.irbuilder.SumLoss.Reading?): String? {
+    if (before == null || after == null) return null
+    return "sum loss %.1f → %.1f dB, worst dip %.1f → %.1f dB".format(java.util.Locale.ROOT, before.averageDb, after.averageDb, before.worstDb, after.worstDb)
+}
+
 fun bandColor(b: jdsp.irbuilder.Band) = when (b) {
     jdsp.irbuilder.Band.LOW -> Jdsp.LowBand
     jdsp.irbuilder.Band.MID -> Jdsp.MidBand
