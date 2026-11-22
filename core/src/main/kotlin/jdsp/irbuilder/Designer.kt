@@ -12,14 +12,14 @@ import kotlin.math.sqrt
 
 /** Where correction is allowed: 1 inside each crossover region, a cosine fade, 0 elsewhere. */
 object Regions {
-    fun weight(f: Double, o: DesignOptions): Double = Crossover.entries.maxOf { xo ->
+    fun weight(f: Double, o: DesignOptions, crossovers: Collection<Crossover> = Crossover.entries): Double = crossovers.maxOfOrNull { xo ->
         val d = abs(log2(f / xo.hz(o)))
         when {
             d <= o.regionOctaves -> 1.0
             d <= o.regionOctaves + o.fadeOctaves -> 0.5 * (1 + cos(PI * (d - o.regionOctaves) / o.fadeOctaves))
             else -> 0.0
         }
-    }
+    } ?: 0.0
 
     /** True for the fully-active core of [xo]'s region, where the report scores the result. */
     fun inCore(f: Double, xo: Crossover, o: DesignOptions) = abs(log2(f / xo.hz(o))) <= o.regionOctaves
@@ -90,6 +90,8 @@ class PhaseDesign(
     val impulses: Array<Array<FloatArray>>,
     val commonGainDb: Double,
     val report: DesignReport,
+    /** Per channel, the crossovers that had data and were corrected; elsewhere the IRs are pure delay. */
+    val corrected: List<List<Crossover>> = listOf(Crossover.entries, Crossover.entries),
 ) {
     val freqs get() = set.freqs
     private val commonGain = Math.pow(10.0, commonGainDb / 20)
@@ -117,7 +119,7 @@ class PhaseDesign(
 
     /** Power average over a seat's positions: level of the band sum and its efficiency. */
     fun seatAverage(seat: Seat, channel: Channel, includeValidation: Boolean = false): SeatCurves? {
-        val gs = set.groups.filter { it.key.seat == seat && it.key.channel == channel && it.isComplete && (includeValidation || !it.validationOnly) }
+        val gs = set.groups.filter { it.key.seat == seat && it.key.channel == channel && it.crossovers().isNotEmpty() && (includeValidation || !it.validationOnly) }
         if (gs.isEmpty()) return null
         val n = freqs.size
         val before = DoubleArray(n)
@@ -149,19 +151,25 @@ object Designer {
     fun design(set: MeasurementSet): PhaseDesign {
         val o = set.options
         o.validate()
-        val checks = Checks.run(set)
+        val checks = Checks.run(set, CheckScope.phaseIrs(set.measurements))
         require(checks.canDesign) { "Fix the errors on the Checks page first: " + checks.items.first { it.severity == Severity.ERROR }.title }
         val f = set.freqs
         val n = f.size
-        val mask = DoubleArray(n) { Regions.weight(f[it], o) }
         val ptsPerOctave = (n - 1) / log2(f.last() / f.first())
         val sigma = o.smoothingOctaves * ptsPerOctave / 2
 
         val phase = Array(2) { Array(3) { DoubleArray(n) } }
         val shiftScale = Array(2) { DoubleArray(3) { 1.0 } }
+        // Each channel corrects only the crossovers it has data for (both bands at some position);
+        // everything else is left at zero phase, so those IRs are a pure delay.
+        val corrected = Channel.entries.map { ch ->
+            Crossover.entries.filter { xo -> set.groups.any { it.key.channel == ch && !it.validationOnly && xo in it.crossovers() } }
+        }
         for (ch in Channel.entries) {
             val ci = ch.ordinal
-            val groups = set.groups.filter { it.key.channel == ch && it.isComplete && !it.validationOnly }
+            val mask = DoubleArray(n) { Regions.weight(f[it], o, corrected[ci]) }
+            val groups = set.groups.filter { it.key.channel == ch && it.crossovers().isNotEmpty() && !it.validationOnly }
+            if (groups.isEmpty()) continue
             val counts = Seat.entries.associateWith { s -> groups.count { it.key.seat == s } }
             val w = groups.map { o.seatWeight(it.key.seat) / counts.getValue(it.key.seat) }.let { raw -> raw.map { it / raw.sum() } }
             val kr = DoubleArray(3) { 1.0 }
@@ -271,14 +279,14 @@ object Designer {
             )
         }
         val partial = PhaseDesign(o, set, phase, responses, impulses, commonGainDb,
-            DesignReport(positions = emptyList(), seats = emptyList(), bands = bands, commonGainDb = commonGainDb, latencyMs = o.latencyMs, jdspLatencyMs = o.jdspLatencyMs, warnings = emptyList()))
+            DesignReport(positions = emptyList(), seats = emptyList(), bands = bands, commonGainDb = commonGainDb, latencyMs = o.latencyMs, jdspLatencyMs = o.jdspLatencyMs, warnings = emptyList()), corrected)
 
-        val positions = set.groups.filter { it.isComplete }.map { g ->
+        val positions = set.groups.filter { it.crossovers().isNotEmpty() }.map { g ->
             val before = partial.efficiencyDb(g, after = false)
             val after = partial.efficiencyDb(g, after = true)
             val sumBefore = g.branchSum()
             val sumAfter = partial.predicted(g)
-            val regions = Crossover.entries.map { xo ->
+            val regions = g.crossovers().filter { it in corrected[g.key.channel.ordinal] }.map { xo ->
                 val idx = (0 until n).filter { Regions.inCore(f[it], xo, o) }
                 val change = idx.map { db(sumAfter.abs(it)) - db(sumBefore.abs(it)) }
                 RegionMetrics(
@@ -312,7 +320,7 @@ object Designer {
                 val c = partial.seatAverage(seat, ch) ?: return@mapNotNull null
                 val be = c.beforeEfficiencyDb
                 val ae = c.afterEfficiencyDb
-                SeatReport(seat, ch, c.positions, Crossover.entries.map { xo ->
+                SeatReport(seat, ch, c.positions, corrected[ch.ordinal].map { xo ->
                     val idx = (0 until n).filter { Regions.inCore(f[it], xo, o) }
                     val change = idx.map { c.afterDb[it] - c.beforeDb[it] }
                     RegionMetrics(xo.label, xo.hz(o),
@@ -323,6 +331,11 @@ object Designer {
             }
         }
         val warnings = ArrayList<String>()
+        for (ch in Channel.entries) {
+            val missing = Crossover.entries - corrected[ch.ordinal].toSet()
+            if (missing.size == Crossover.entries.size) warnings += "${ch.label} channel: no measurements, so its IRs are a pure delay (no correction)."
+            else missing.forEach { warnings += "${ch.label} channel: ${it.label} not corrected (no ${it.lower.label}+${it.upper.label} sweeps)." }
+        }
         warnings += "J_DSP's crossovers, PEQ, delays, polarity and gains must match the measured baseline exactly."
         warnings += "Mono bass and cross-channel routing must be off during measurement and playback."
         warnings += "These are predictions. Re-measure both seats with the IRs loaded before trusting the tune."
@@ -342,7 +355,7 @@ object Designer {
         }
         val report = DesignReport(positions = positions, seats = seats, bands = bands, commonGainDb = commonGainDb.round(3),
             latencyMs = o.latencyMs.round(2), jdspLatencyMs = o.jdspLatencyMs.round(2), warnings = warnings)
-        return PhaseDesign(o, set, phase, responses, impulses, commonGainDb, report)
+        return PhaseDesign(o, set, phase, responses, impulses, commonGainDb, report, corrected)
     }
 
     internal fun maxGroupDelayMs(phase: DoubleArray, f: DoubleArray): Double {

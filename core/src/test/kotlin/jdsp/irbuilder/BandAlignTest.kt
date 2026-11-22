@@ -232,8 +232,8 @@ class BandLimitedAndPartialSetsTest {
         val r = BandAlign.solve(set, a)
         assertTrue(r.results.all { it.pair == AlignPair.LOW_MID } && r.results.size == 2)
         assertTrue(r.results.all { it.proposal != null })
-        // The Phase IRs still insist on all three bands.
-        assertFalse(Checks.run(set).canDesign)
+        // The Phase IRs can run on these too: Low/Mid corrected, Mid/High left as pure delay.
+        assertTrue(Checks.run(set, CheckScope.phaseIrs(ms)).canDesign)
     }
 
     @Test
@@ -370,5 +370,61 @@ class MissingPairBandTest {
         val m = Measurement(file.path, Seat.DRIVER, "c", Channel.L, Band.MID, "R")
         val set = MeasurementSet.load(listOf(m), DesignOptions(), setOf(Crossover.LOW_MID))
         assertTrue(set.loadErrors.single().message.contains("75–300 Hz"), set.loadErrors.single().message)
+    }
+}
+
+class PartialPhaseIrTest {
+    private fun files(dir: java.io.File, bands: List<Band>, channels: List<Channel> = Channel.entries, seats: List<Seat> = Seat.entries): List<Measurement> {
+        val out = ArrayList<Measurement>()
+        for (seat in seats) for (ch in channels) for (b in bands) {
+            val file = java.io.File(dir, "${seat.name}_c_${ch.name}_${b.fileName}.txt")
+            Fixtures.writeRew(file, { f -> Fixtures.band(b, f, delaySeconds = when (b) { Band.MID -> 0.0012; Band.HIGH -> 0.0013; else -> 0.0 }) })
+            out += Measurement(file.path, seat, "c", ch, b, if (ch == Channel.L) "R" else "L")
+        }
+        return out
+    }
+
+    private val o = DesignOptions(taps = 8192, latencyFrames = 4096)
+    private fun isPureDelay(x: FloatArray, at: Int): Boolean {
+        val peak = x.indices.maxBy { kotlin.math.abs(x[it]) }
+        val rest = x.indices.filter { it != peak }.sumOf { x[it].toDouble() * x[it] }
+        return peak == at && rest < 1e-8 * x[peak] * x[peak]
+    }
+
+    @Test
+    fun lowAndMidOnlyCorrectsLowMidAndLeavesHighAsDelay() {
+        val ms = files(kotlin.io.path.createTempDirectory("irb").toFile(), listOf(Band.LOW, Band.MID))
+        val set = MeasurementSet.load(ms, o, CheckScope.phaseIrs(ms).crossovers.toSet())
+        val d = Designer.design(set)
+        assertEquals(listOf(Crossover.LOW_MID), d.corrected[0])
+        for (ci in 0 until 2) assertTrue(isPureDelay(d.impulses[2][ci], o.latencyFrames), "High IR should be a pure delay")
+        assertTrue(d.report.bands.first { it.band == Band.MID && it.channel == Channel.L }.maxPhaseDeg > 5)
+        d.report.positions.forEach { p -> assertEquals(listOf("Low/Mid"), p.regions.map { it.crossover }) }
+        assertTrue(d.report.warnings.any { it.contains("Mid/High not corrected") })
+        // The package still has all three WAVs for J_DSP's per-band mode.
+        val dir = kotlin.io.path.createTempDirectory("irb-out").toFile()
+        Exporter.export(d, dir)
+        assertTrue(listOf("low.wav", "mid.wav", "high.wav").all { java.io.File(dir, it).isFile })
+    }
+
+    @Test
+    fun oneChannelOnlyLeavesTheOtherChannelAsDelay() {
+        val ms = files(kotlin.io.path.createTempDirectory("irb").toFile(), Band.BRANCHES, channels = listOf(Channel.L))
+        val d = Designer.design(MeasurementSet.load(ms, o))
+        assertEquals(Crossover.entries, d.corrected[Channel.L.ordinal])
+        assertTrue(d.corrected[Channel.R.ordinal].isEmpty())
+        for (bi in 0 until 3) assertTrue(isPureDelay(d.impulses[bi][Channel.R.ordinal], o.latencyFrames))
+        assertTrue(d.report.warnings.any { it.contains("Right channel: no measurements") })
+        assertTrue(d.report.positions.isNotEmpty() && d.report.positions.all { it.channel == Channel.L })
+    }
+
+    @Test
+    fun oneSeatOnlyDesignsWithAWarning() {
+        val ms = files(kotlin.io.path.createTempDirectory("irb").toFile(), Band.BRANCHES, seats = listOf(Seat.DRIVER))
+        val c = Checks.run(MeasurementSet.load(ms, o), CheckScope.phaseIrs(ms))
+        assertTrue(c.canDesign)
+        assertTrue(c.items.any { it.severity == Severity.WARNING && it.title.contains("Driver seat only") })
+        val d = Designer.design(MeasurementSet.load(ms, o))
+        assertTrue(d.report.positions.all { it.seat == Seat.DRIVER && !it.deteriorated })
     }
 }

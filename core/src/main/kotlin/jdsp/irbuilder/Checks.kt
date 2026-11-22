@@ -56,7 +56,23 @@ data class CheckScope(
     val crossovers: List<Crossover> get() = Crossover.entries.filter { xo -> units.any { xo.lower in it.second && xo.upper in it.second } }
 
     companion object {
-        val PHASE_IRS = CheckScope(listOf("the Phase IRs" to Band.BRANCHES.toSet()), strict = true, purpose = "the Phase IRs")
+        /**
+         * Phase IRs: each crossover is corrected where both of its bands were measured, so like
+         * Band Align it's judged per crossover. Anything without data is left as a pure delay.
+         */
+        val PHASE_IRS = phaseIrs(null)
+
+        fun phaseIrs(measurements: List<Measurement>?): CheckScope {
+            val (used, skipped) = Crossover.entries.partition { xo ->
+                val outer = if (xo == Crossover.LOW_MID) Band.LOW else Band.HIGH
+                measurements == null || measurements.any { it.band == outer }
+            }
+            return CheckScope(
+                used.map { "${it.label} correction" to setOf(it.lower, it.upper) },
+                strict = false, purpose = "the Phase IRs",
+                skipped = skipped.map { "${it.label}: no ${(if (it == Crossover.LOW_MID) Band.LOW else Band.HIGH).label} sweeps" },
+            )
+        }
 
         /**
          * One unit per enabled pair, so a position with only one pair's bands still counts for that
@@ -96,9 +112,17 @@ object Checks {
             err("No measurements", "Import software-band-solo sweeps for ${scope.purpose}.")
             return CheckResult(items, emptyList())
         }
-        for (s in scope.skipped) warn("$s, so it isn't aligned", "Switch that pair off on the Band Align page, or import its sweeps.")
+        val aligning = scope.purpose == "Band Align"
+        for (s in scope.skipped) {
+            if (aligning) warn("$s, so it isn't aligned", "Switch that pair off on the Band Align page, or import its sweeps.")
+            else warn("$s, so it isn't corrected", "Its IRs pass that crossover unchanged (pure delay). Import its sweeps to correct it.")
+        }
         if (scope.requiredBands.isEmpty()) {
-            err("Nothing to align", if (scope.skipped.isEmpty()) "Switch on Low against Mid, High against Mid, or both." else "None of the switched-on pairs has sweeps for its bands.")
+            err(if (aligning) "Nothing to align" else "Nothing to correct", when {
+                !aligning -> "Import Low+Mid or Mid+High band-solo sweeps."
+                scope.skipped.isEmpty() -> "Switch on Low against Mid, High against Mid, or both."
+                else -> "None of the switched-on pairs has sweeps for its bands."
+            })
             return CheckResult(items.sortedBy { it.severity.ordinal }, emptyList())
         }
         for (e in set.loadErrors) err("Cannot use ${MeasurementSet.fileName(e.measurement)}", e.message)
@@ -135,14 +159,14 @@ object Checks {
                 }
             }
         } else if (scope.units.none { (_, bands) -> set.groups.any { usable(it, bands) } }) {
-            err("Nothing to align", "No position has the sweeps for " + scope.units.joinToString(" or ") { (u, b) -> "$u (" + Band.BRANCHES.filter { it in b }.joinToString("/") { it.label } + ")" } + " that aren't validation-only.")
+            err(if (scope.purpose == "Band Align") "Nothing to align" else "Nothing to correct", "No position has the sweeps for " + scope.units.joinToString(" or ") { (u, b) -> "$u (" + Band.BRANCHES.filter { it in b }.joinToString("/") { it.label } + ")" } + " that aren't validation-only.")
         } else {
             // Judged per pair, the same way Band Align picks positions for each pair.
             for ((unit, bands) in scope.units) for (ch in Channel.entries) {
                 val bandList = Band.BRANCHES.filter { it in bands }.joinToString("/") { it.label }
                 val seats = Seat.entries.filter { st -> set.groups.any { it.key.seat == st && it.key.channel == ch && usable(it, bands) } }
                 when {
-                    seats.isEmpty() -> warn("${ch.label} side: no $unit", "No $bandList sweeps for the ${ch.label.lowercase()} side.")
+                    seats.isEmpty() -> warn("${ch.label} side: no $unit", "No $bandList sweeps for the ${ch.label.lowercase()} side." + if (scope.purpose == "Band Align") "" else " Its IRs pass that crossover unchanged.")
                     seats.size == 1 -> warn("${ch.label} side $unit: ${seats.single().label} seat only", "The other seat has no $bandList sweeps, so it isn't checked for getting worse.")
                 }
             }

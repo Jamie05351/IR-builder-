@@ -10,6 +10,9 @@ class LoadedGroup(
     val measurements: Map<Band, Measurement>,
 ) {
     val isComplete get() = has(Band.BRANCHES)
+
+    /** The crossovers this position can say something about: both of their bands were measured. */
+    fun crossovers(): List<Crossover> = Crossover.entries.filter { it.lower in responses && it.upper in responses }
     fun has(bands: Collection<Band>) = bands.all { it in responses }
     private val size get() = responses.values.first().response.size
 

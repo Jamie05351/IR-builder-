@@ -205,7 +205,7 @@ class AppState(private var scope: CoroutineScope) {
     }
 
     /** What the current tool requires of the measurements. */
-    fun checkScope(): CheckScope = if (tool == Tool.BAND_ALIGN) CheckScope.bandAlign(align, measurements.toList()) else CheckScope.PHASE_IRS
+    fun checkScope(): CheckScope = if (tool == Tool.BAND_ALIGN) CheckScope.bandAlign(align, measurements.toList()) else CheckScope.phaseIrs(measurements.toList())
 
     /**
      * Installs a freshly loaded set. Results computed from a different load (e.g. files re-exported
@@ -264,7 +264,7 @@ class AppState(private var scope: CoroutineScope) {
         val snapshot = measurements.toList()
         val o = options
         val (s, c, d) = withContext(Dispatchers.Default) {
-            val (s, c) = loadAndCheck(snapshot, o, CheckScope.PHASE_IRS)
+            val (s, c) = loadAndCheck(snapshot, o, CheckScope.phaseIrs(snapshot))
             // The phase IRs are designed on the measurements as taken: Band Align is a separate
             // tool, applied in J_DSP and re-measured before designing IRs.
             Triple(s, c, if (c.canDesign) Designer.design(s) else null)
