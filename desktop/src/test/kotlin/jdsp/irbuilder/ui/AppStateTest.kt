@@ -70,6 +70,12 @@ class AppStateTest {
         // A name that does say its band keeps it; other tools keep the "New files" default.
         state.addFiles(listOf(File(dir, "driver_L_mid.txt").apply { writeText("x") }))
         kotlin.test.assertEquals(jdsp.irbuilder.Band.MID, state.measurements.last().band)
+        // With tagging from names off, the band picked under "New files" is used as is.
+        val manual = AppState(kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined))
+        manual.startTool(Tool.EQ_WIZARD)
+        manual.defaults = manual.defaults.copy(autoTag = false, band = jdsp.irbuilder.Band.MID)
+        manual.addFiles(files.take(2))
+        kotlin.test.assertEquals(List(2) { jdsp.irbuilder.Band.MID }, manual.measurements.map { it.band })
         val other = AppState(kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined))
         other.startTool(Tool.BAND_ALIGN)
         other.addFiles(files.take(1))

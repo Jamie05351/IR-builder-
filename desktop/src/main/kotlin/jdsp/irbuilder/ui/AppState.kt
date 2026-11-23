@@ -188,7 +188,8 @@ class AppState(private var scope: CoroutineScope) {
             val ch = t.channel ?: d.channel
             measurements += Measurement(
                 path = f.path, seat = t.seat ?: d.seat, position = t.position ?: d.position, channel = ch,
-                band = t.band ?: untaggedBand(d.band), timingReference = d.reference(ch), validationOnly = d.validationOnly, calibrationDb = d.calibrationDb,
+                // With tagging from names off, the band chosen under "New files" is what the user meant.
+                band = t.band ?: if (d.autoTag) untaggedBand(d.band) else d.band, timingReference = d.reference(ch), validationOnly = d.validationOnly, calibrationDb = d.calibrationDb,
             )
             added++
         }
