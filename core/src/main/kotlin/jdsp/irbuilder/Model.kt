@@ -180,15 +180,28 @@ fun requiredCoverageHz(band: Band, o: DesignOptions, inUse: Set<Crossover> = Cro
     val lowMid = Crossover.LOW_MID in inUse
     val midHigh = Crossover.MID_HIGH in inUse
     if (band == Band.COMBINED && o.irMode == IrMode.STEREO) {
-        // The stereo IR is fitted over its whole range, fades included.
-        return maxOf(o.stereoMinHz / pow2(o.fadeOctaves), o.analysisMinHz)..minOf(o.stereoMaxHz * pow2(o.fadeOctaves), o.analysisMaxHz)
+        // The stereo IR (and the EQ Wizard) read their whole range, fades included.
+        return sweepable(maxOf(o.stereoMinHz / pow2(o.fadeOctaves), o.analysisMinHz)..minOf(o.stereoMaxHz * pow2(o.fadeOctaves), o.analysisMaxHz))
     }
     val r = when (band) {
         Band.LOW -> o.lowMidHz / 4..o.lowMidHz * 2
         Band.MID, Band.COMBINED -> (if (lowMid || !midHigh) o.lowMidHz / 2 else o.midHighHz / 2)..(if (midHigh || !lowMid) o.midHighHz * 2 else o.lowMidHz * 2)
         Band.HIGH -> o.midHighHz / 2..o.midHighHz * 4
     }
-    return maxOf(r.start, o.analysisMinHz)..minOf(r.endInclusive, o.analysisMaxHz)
+    return sweepable(maxOf(r.start, o.analysisMinHz)..minOf(r.endInclusive, o.analysisMaxHz))
+}
+
+/** What a standard sweep can be asked to cover: REW's usual 20 Hz–20 kHz export, with a little slack. */
+const val SWEEP_MIN_HZ = 22.0
+const val SWEEP_MAX_HZ = 19500.0
+
+/**
+ * [r] held within [SWEEP_MIN_HZ]..[SWEEP_MAX_HZ], so a normal 20 Hz–20 kHz sweep always passes. Past a
+ * sweep's ends the band is read as unmeasured (silent), which every tool already allows for.
+ */
+private fun sweepable(r: ClosedFloatingPointRange<Double>): ClosedFloatingPointRange<Double> {
+    val lo = r.start.coerceIn(SWEEP_MIN_HZ, SWEEP_MAX_HZ)
+    return lo..r.endInclusive.coerceIn(lo, SWEEP_MAX_HZ)
 }
 
 /** Which convolver architecture the Phase IRs are made for. */
