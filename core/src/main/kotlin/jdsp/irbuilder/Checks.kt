@@ -96,11 +96,12 @@ data class CheckScope(
         }
 
         const val FINDER_PURPOSE = "the Crossover Finder"
+        const val EQ_PURPOSE = "the EQ Wizard"
 
         /** EQ Wizard: each side's Combined sweeps, or its band solos summed when there are none. */
         fun eqWizard(measurements: List<Measurement>?): CheckScope =
-            if (measurements == null || measurements.any { it.band == Band.COMBINED }) CheckScope(listOf("EQ" to setOf(Band.COMBINED)), strict = false, purpose = "the EQ Wizard")
-            else CheckScope(listOf("EQ" to Band.BRANCHES.toSet()), strict = false, purpose = "the EQ Wizard")
+            if (measurements == null || measurements.any { it.band == Band.COMBINED }) CheckScope(listOf("EQ" to setOf(Band.COMBINED)), strict = false, purpose = EQ_PURPOSE)
+            else CheckScope(listOf("EQ" to Band.BRANCHES.toSet()), strict = false, purpose = EQ_PURPOSE)
 
         fun bandAlign(a: AlignOptions, measurements: List<Measurement>? = null): CheckScope {
             val enabled = AlignPair.entries.filter { if (it == AlignPair.LOW_MID) a.lowMid else a.midHigh }
@@ -139,6 +140,14 @@ object Checks {
         val aligning = scope.purpose == "Band Align" || finding
         // Phase IRs in Per-band mode with only Combined sweeps: those are the Stereo IR's input.
         val combinedOnly = !aligning && set.measurements.all { it.band == Band.COMBINED }
+        // EQ Wizard without Combined sweeps and without full Low/Mid/High sets: most likely full-range
+        // sweeps tagged with a band (a name without "combined" takes the default band).
+        if (scope.purpose == CheckScope.EQ_PURPOSE && set.measurements.none { it.band == Band.COMBINED } &&
+            set.measurements.groupBy { GroupKey(it.seat, it.position.trim(), it.channel) }.values.none { ms -> Band.BRANCHES.all { b -> ms.any { it.band == b } } }) {
+            val tags = set.measurements.map { it.band }.distinct().joinToString("/") { it.label }
+            err("No full-system sweeps for the EQ Wizard", "Your files are tagged $tags. If they are full-range sweeps (all bands playing), set their Band to Combined on the Measurements page. Otherwise import Low, Mid and High solos for each position so they can be summed.")
+            return CheckResult(items, emptyList())
+        }
         if (combinedOnly && scope.requiredBands.isEmpty()) {
             err("Only Combined sweeps: switch to Stereo mode", "Per-band IRs need Low/Mid/High band-solo sweeps. Combined sweeps (all bands playing) are what the Stereo IR uses: choose Convolver mode › Stereo (on this page or Design).")
             return CheckResult(items, emptyList())

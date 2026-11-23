@@ -166,5 +166,43 @@ class EqWizardTest {
         assertTrue(EqWizard.overlapPenalty(listOf(EqBand(75.0, -5.0, 2.0), EqBand(77.0, 4.0, 0.3))) > 2.0)
         assertEquals(0.0, EqWizard.overlapPenalty(listOf(EqBand(100.0, -4.0, 1.0), EqBand(200.0, -3.0, 1.0))), 0.0)
     }
+
+    @Test
+    fun fullRangeSweepsTaggedAsABandAreExplained() {
+        // Four full-range sweeps that took the default band (Low): the checks say what to change.
+        val dir = createTempDirectory("eq").toFile()
+        val ms = ArrayList<Measurement>()
+        for (seat in Seat.entries) for (ch in Channel.entries) {
+            val file = File(dir, "${seat.name}_${ch.name}.txt")
+            Fixtures.writeRew(file, { hz -> Fixtures.C(kotlin.math.cos(-2 * Math.PI * hz * 0.003), kotlin.math.sin(-2 * Math.PI * hz * 0.003)) })
+            ms += Measurement(file.path, seat, "c", ch, Band.LOW, "ref-${ch.name}")
+        }
+        val scope = CheckScope.eqWizard(ms)
+        val r = Checks.run(MeasurementSet.load(ms, DesignOptions(irMode = IrMode.STEREO, stereoMinHz = 30.0, stereoMaxHz = 12000.0), scope.crossovers.toSet()), scope)
+        assertTrue(!r.canDesign)
+        val e = r.items.single { it.severity == Severity.ERROR }
+        assertTrue(e.title.contains("full-system") && e.detail.contains("Combined") && e.detail.contains("tagged Low"), "${e.title}: ${e.detail}")
+    }
+
+    @Test
+    fun aStandardTwentyHertzToTwentyKilohertzSweepIsEnoughForAnyFitRange() {
+        // REW's usual export ends at 20 kHz; fitting to 16–20 kHz must not ask for more.
+        val dir = createTempDirectory("eq").toFile()
+        val ms = ArrayList<Measurement>()
+        for (seat in Seat.entries) for (ch in Channel.entries) {
+            val file = File(dir, "${seat.name}_${ch.name}.txt")
+            Fixtures.writeRew(file, { hz -> Fixtures.C(kotlin.math.cos(-2 * Math.PI * hz * 0.003), kotlin.math.sin(-2 * Math.PI * hz * 0.003)) }, minHz = 20.14, maxHz = 20037.0)
+            ms += Measurement(file.path, seat, "c", ch, Band.COMBINED, "ref-${ch.name}")
+        }
+        for (top in listOf(12000.0, 16000.0, 20000.0)) for (bottom in listOf(20.0, 30.0)) {
+            val o = EqOptions(minHz = bottom, maxHz = top, bassLiftDb = 0.0, trebleTiltDb = 0.0)
+            val set = MeasurementSet.load(ms, DesignOptions(irMode = IrMode.STEREO, stereoMinHz = o.minHz, stereoMaxHz = o.maxHz), emptySet())
+            assertTrue(set.loadErrors.isEmpty(), "$bottom–$top Hz: " + set.loadErrors.joinToString { it.message })
+            val r = EqWizard.solve(set, o)
+            assertTrue(r.sides.all { it.rmsBeforeDb < 0.5 && it.bands.isEmpty() }, "$bottom–$top Hz: ${r.sides.map { it.rmsBeforeDb to it.bands }}")
+        }
+        // Band solos too: a High band asked to reach past 20 kHz (Mid/High at 7 kHz) is capped.
+        assertTrue(requiredCoverageHz(Band.HIGH, DesignOptions(midHighHz = 7000.0)).endInclusive <= SWEEP_MAX_HZ)
+    }
 }
 

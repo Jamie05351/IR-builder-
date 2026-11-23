@@ -188,7 +188,8 @@ class AppState(private var scope: CoroutineScope) {
             val ch = t.channel ?: d.channel
             measurements += Measurement(
                 path = f.path, seat = t.seat ?: d.seat, position = t.position ?: d.position, channel = ch,
-                band = t.band ?: d.band, timingReference = d.reference(ch), validationOnly = d.validationOnly, calibrationDb = d.calibrationDb,
+                // With tagging from names off, the band chosen under "New files" is what the user meant.
+                band = t.band ?: if (d.autoTag) untaggedBand(d.band) else d.band, timingReference = d.reference(ch), validationOnly = d.validationOnly, calibrationDb = d.calibrationDb,
             )
             added++
         }
@@ -199,6 +200,16 @@ class AppState(private var scope: CoroutineScope) {
             status = "Added $added Combined sweep(s): switched the convolver mode to Stereo (change it on the Checks or Design page)."
         }
         invalidate()
+    }
+
+    /**
+     * The band for a file whose name doesn't say: the EQ Wizard and the Stereo IR work from
+     * full-range sweeps, so there it's Combined; elsewhere the default from "New files".
+     */
+    private fun untaggedBand(default: Band): Band = when {
+        tool == Tool.EQ_WIZARD -> Band.COMBINED
+        tool == Tool.PHASE_IRS && options.irMode == jdsp.irbuilder.IrMode.STEREO -> Band.COMBINED
+        else -> default
     }
 
     fun update(index: Int, m: Measurement) {
