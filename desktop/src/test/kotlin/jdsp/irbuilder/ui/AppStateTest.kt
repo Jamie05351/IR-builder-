@@ -52,4 +52,28 @@ class AppStateTest {
         assertNull(state.alignment)
         assertNull(state.design)
     }
+
+    @Test
+    fun filesWithoutABandInTheirNameAreCombinedInTheEqWizard() {
+        val dir = createTempDirectory("irb-eq").toFile()
+        val names = listOf("L_1_sw_DRV.txt", "L_1_sw__PAS.txt", "R_1_sw_DRV.txt", "R_1_sw__PAS.txt")
+        val files = names.map { File(dir, it).apply { writeText("x") } }
+        val state = AppState(kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined))
+        state.startTool(Tool.EQ_WIZARD)
+        state.addFiles(files)
+        kotlin.test.assertEquals(List(4) { jdsp.irbuilder.Band.COMBINED }, state.measurements.map { it.band })
+        for (m in state.measurements) {
+            val name = File(m.path).name
+            kotlin.test.assertEquals(if ("DRV" in name) jdsp.irbuilder.Seat.DRIVER else jdsp.irbuilder.Seat.PASSENGER, m.seat, name)
+            kotlin.test.assertEquals(if (name.startsWith("L")) jdsp.irbuilder.Channel.L else jdsp.irbuilder.Channel.R, m.channel, name)
+        }
+        // A name that does say its band keeps it; other tools keep the "New files" default.
+        state.addFiles(listOf(File(dir, "driver_L_mid.txt").apply { writeText("x") }))
+        kotlin.test.assertEquals(jdsp.irbuilder.Band.MID, state.measurements.last().band)
+        val other = AppState(kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined))
+        other.startTool(Tool.BAND_ALIGN)
+        other.addFiles(files.take(1))
+        kotlin.test.assertEquals(jdsp.irbuilder.Band.LOW, other.measurements.single().band)
+    }
 }
+
