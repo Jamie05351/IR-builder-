@@ -7,6 +7,8 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.ln
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sin
 
@@ -335,8 +337,35 @@ object Importer {
         return LoadedResponse(out, SourceKind.REW_TEXT, null, fa.first()..fa.last(), smoothing, if (hasPhase) delayMs else 0.0, hasPhase)
     }
 
+    /**
+     * True for a recording of the measurement sweep (or any long signal) rather than an impulse
+     * response. An impulse, even a car's, has most of its energy in the 100 ms after its peak and
+     * very little before it; a recorded sweep spreads it over the seconds the sweep lasts, much of
+     * it before the loudest moment.
+     */
+    internal fun looksLikeSweepRecording(x: DoubleArray, sampleRate: Int): Boolean {
+        if (x.size < sampleRate / 2) return false
+        var peak = 0
+        for (i in x.indices) if (abs(x[i]) > abs(x[peak])) peak = i
+        var total = 0.0
+        for (v in x) total += v * v
+        if (total <= 0) return false
+        fun energy(from: Int, to: Int): Double {
+            var e = 0.0
+            for (i in max(0, from) until min(x.size, to)) e += x[i] * x[i]
+            return e / total
+        }
+        val main = energy(peak - (0.005 * sampleRate).toInt(), peak + (0.1 * sampleRate).toInt())
+        val before = energy(peak - (0.2 * sampleRate).toInt(), peak - (0.005 * sampleRate).toInt())
+        return main < 0.35 && before > 0.05
+    }
+
     private fun readImpulse(file: File, m: Measurement, freqs: DoubleArray, sampleRate: Int, windowCycles: Int): LoadedResponse {
         val wav = readWav(file)
+        require(!looksLikeSweepRecording(wav.samples, wav.sampleRate)) {
+            "${file.name}: this is a recording of the sweep itself, not an impulse response: its sound is spread over seconds instead of arriving at once. " +
+                "Measure in REW and export the result: File › Export › Impulse response as WAV, or File › Export › Measurement as text."
+        }
         require(wav.sampleRate == sampleRate) { "${file.name}: WAV is ${wav.sampleRate} Hz but the project is $sampleRate Hz" }
         val x = wav.samples
         require(x.size in 16..(1 shl 22)) { "${file.name}: impulse must be 16 to 4194304 samples" }
