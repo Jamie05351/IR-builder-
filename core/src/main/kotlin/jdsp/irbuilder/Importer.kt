@@ -7,6 +7,8 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.ln
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sin
 
@@ -335,8 +337,80 @@ object Importer {
         return LoadedResponse(out, SourceKind.REW_TEXT, null, fa.first()..fa.last(), smoothing, if (hasPhase) delayMs else 0.0, hasPhase)
     }
 
+    /**
+     * True for a recording of the measurement sweep (or any long signal) rather than an impulse
+     * response. Two things must both hold, so a slowly building, long-ringing impulse isn't caught:
+     *  - its energy is spread out: under 35% in the 100 ms after its loudest sample, and over 5%
+     *    in the 200 ms before it (an impulse arrives at once);
+     *  - its frequency rises with time: across at least four octave bands that stand out from the
+     *    background, spanning three octaves or more, each band is loudest later than the one below
+     *    it, 0.4 s or more from first to last. An impulse's bands all peak within a moment of
+     *    each other, however long a resonance rings.
+     */
+    internal fun looksLikeSweepRecording(x: DoubleArray, sampleRate: Int): Boolean {
+        if (x.size < sampleRate / 2) return false
+        var peak = 0
+        for (i in x.indices) if (abs(x[i]) > abs(x[peak])) peak = i
+        var total = 0.0
+        for (v in x) total += v * v
+        if (total <= 0) return false
+        fun energy(from: Int, to: Int): Double {
+            var e = 0.0
+            for (i in max(0, from) until min(x.size, to)) e += x[i] * x[i]
+            return e / total
+        }
+        val main = energy(peak - (0.005 * sampleRate).toInt(), peak + (0.1 * sampleRate).toInt())
+        val before = energy(peak - (0.2 * sampleRate).toInt(), peak - (0.005 * sampleRate).toInt())
+        if (main >= 0.35 || before <= 0.05) return false
+        return frequencyRisesWithTime(x, sampleRate)
+    }
+
+    /** See [looksLikeSweepRecording]: octave bands from 31.5 Hz, each one's loudest moment. */
+    private fun frequencyRisesWithTime(x: DoubleArray, sampleRate: Int): Boolean {
+        val w = 4096
+        val hop = 1024
+        val frames = (x.size - w) / hop
+        if (frames < 4) return false
+        val centres = (0 until 10).map { 31.5 * (1 shl it) }.filter { it * 1.414 < sampleRate / 2.0 }
+        val binHz = sampleRate.toDouble() / w
+        val bins = centres.map { c -> (Math.ceil(c / 1.414 / binHz).toInt()).coerceAtLeast(1) until (c * 1.414 / binHz).toInt().coerceAtMost(w / 2) }
+        val win = DoubleArray(w) { 0.5 - 0.5 * cos(2 * PI * it / w) }
+        val e = Array(centres.size) { DoubleArray(frames) }
+        val seg = DoubleArray(w)
+        for (j in 0 until frames) {
+            for (k in 0 until w) seg[k] = x[j * hop + k] * win[k]
+            val s = Fft.rfft(seg, w)
+            for (b in centres.indices) {
+                var acc = 0.0
+                for (i in bins[b]) acc += s.re[i] * s.re[i] + s.im[i] * s.im[i]
+                e[b][j] = acc
+            }
+        }
+        // Bands that stand 15 dB clear of their own background, and when each is loudest.
+        val loud = centres.indices.mapNotNull { b ->
+            val sorted = e[b].sorted()
+            val median = sorted[sorted.size / 2] + 1e-30
+            val top = e[b].indices.maxBy { e[b][it] }
+            if (e[b][top] >= 30 * median) b to top * hop / sampleRate.toDouble() else null
+        }
+        // Longest run, in frequency order, whose loudest moments never go back in time.
+        val n = loud.size
+        if (n < 4) return false
+        val len = IntArray(n) { 1 }
+        val prev = IntArray(n) { -1 }
+        for (i in 0 until n) for (j in 0 until i) if (loud[j].second <= loud[i].second && len[j] + 1 > len[i]) { len[i] = len[j] + 1; prev[i] = j }
+        val end = len.indices.maxBy { len[it] }
+        var start = end
+        while (prev[start] >= 0) start = prev[start]
+        return len[end] >= 4 && loud[end].first - loud[start].first >= 3 && loud[end].second - loud[start].second >= 0.4
+    }
+
     private fun readImpulse(file: File, m: Measurement, freqs: DoubleArray, sampleRate: Int, windowCycles: Int): LoadedResponse {
         val wav = readWav(file)
+        require(!looksLikeSweepRecording(wav.samples, wav.sampleRate)) {
+            "${file.name}: this is a recording of the sweep itself, not an impulse response: its sound is spread over seconds instead of arriving at once. " +
+                "Measure in REW and export the result: File › Export › Impulse response as WAV, or File › Export › Measurement as text."
+        }
         require(wav.sampleRate == sampleRate) { "${file.name}: WAV is ${wav.sampleRate} Hz but the project is $sampleRate Hz" }
         val x = wav.samples
         require(x.size in 16..(1 shl 22)) { "${file.name}: impulse must be 16 to 4194304 samples" }

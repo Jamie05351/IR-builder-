@@ -214,8 +214,15 @@ class AppState(private var scope: CoroutineScope) {
     }
 
     fun update(index: Int, m: Measurement) {
-        if (index in measurements.indices && measurements[index] != m) {
-            measurements[index] = m
+        val old = measurements.getOrNull(index) ?: return
+        var next = m
+        // Moving a file to the other side moves its timing reference with it, when it was that
+        // side's default: each side's sweeps use the other side's speaker.
+        if (m.channel != old.channel && m.timingReference == old.timingReference && old.timingReference.trim() == defaults.reference(old.channel).trim()) {
+            next = m.copy(timingReference = defaults.reference(m.channel))
+        }
+        if (measurements[index] != next) {
+            measurements[index] = next
             invalidate()
         }
     }
@@ -243,7 +250,11 @@ class AppState(private var scope: CoroutineScope) {
             var m = measurements.getOrNull(i) ?: continue
             if (seat) m = m.copy(seat = d.seat)
             if (position) m = m.copy(position = d.position)
-            if (channel) m = m.copy(channel = d.channel)
+            if (channel && m.channel != d.channel) {
+                val followed = m.timingReference.trim() == d.reference(m.channel).trim()
+                m = m.copy(channel = d.channel)
+                if (followed) m = m.copy(timingReference = d.reference(m.channel))
+            }
             if (band) m = m.copy(band = d.band)
             if (reference) m = m.copy(timingReference = d.reference(m.channel))
             if (validation) m = m.copy(validationOnly = d.validationOnly)

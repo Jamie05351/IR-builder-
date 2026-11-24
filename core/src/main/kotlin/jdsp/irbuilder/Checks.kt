@@ -176,7 +176,12 @@ object Checks {
             else set.measurements.filter { it.band != Band.COMBINED && GroupKey(it.seat, it.position.trim(), it.channel) !in withCombined }
         for (ch in Channel.entries) {
             val refs = timed.filter { it.channel == ch }.map { it.timingReference.trim() }.toSet()
-            if (refs.size > 1) err("${ch.label}: more than one timing reference", "Found ${refs.joinToString()}. Every ${ch.label.lowercase()} sweep must use the same unchanged timing reference.")
+            if (refs.size > 1) {
+                val which = timed.filter { it.channel == ch }.groupBy { it.timingReference.trim() }.entries.joinToString("; ") { (ref, ms) ->
+                    "\"$ref\": " + ms.take(4).joinToString { MeasurementSet.fileName(it) } + if (ms.size > 4) " and ${ms.size - 4} more" else ""
+                }
+                err("${ch.label}: more than one timing reference", "$which. Every ${ch.label.lowercase()} sweep must use the same unchanged timing reference (the left and right sides may differ, e.g. each using the other side's speaker).")
+            }
             if (refs.any { it.isEmpty() }) err("${ch.label}: missing timing reference", "Enter the timing-reference ID used for each sweep.")
         }
 
