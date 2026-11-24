@@ -47,4 +47,17 @@ class SweepRecordingTest {
         assertTrue(Importer.looksLikeSweepRecording(sweepRecording(), fs))
         assertFalse(Importer.looksLikeSweepRecording(carImpulse(), fs))
     }
+
+    @Test
+    fun aSlowlyBuildingRingingImpulseIsNotASweep() {
+        // One second of silence, then t·e^(−t/0.2)·sin(2π·40·t): the energy is spread out like a
+        // sweep's, but every frequency arrives at once.
+        val r = Random(3)
+        val x = DoubleArray(3 * fs) { r.nextDouble(-1.0, 1.0) * 1e-5 }
+        for (n in fs until 3 * fs) {
+            val t = (n - fs).toDouble() / fs
+            x[n] += t * exp(-t / 0.2) * sin(2 * PI * 40 * t)
+        }
+        assertFalse(Importer.looksLikeSweepRecording(x, fs))
+    }
 }
