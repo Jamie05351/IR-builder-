@@ -169,9 +169,13 @@ object Checks {
 
         // Timing references: each channel's sweeps must share one unchanged reference, or the
         // band-to-band phase the designer aligns is meaningless.
-        // (Magnitude only, as for the EQ Wizard: no phase is compared, so no reference is needed.)
-        if (!o.magnitudeOnly) for (ch in Channel.entries) {
-            val refs = set.measurements.filter { it.channel == ch }.map { it.timingReference.trim() }.toSet()
+        // Magnitude only (the EQ Wizard): a Combined sweep is used on its own, so it needs no
+        // reference; band solos at a position without one are summed, so theirs still must match.
+        val withCombined = set.measurements.filter { it.band == Band.COMBINED }.map { GroupKey(it.seat, it.position.trim(), it.channel) }.toSet()
+        val timed = if (!o.magnitudeOnly) set.measurements
+            else set.measurements.filter { it.band != Band.COMBINED && GroupKey(it.seat, it.position.trim(), it.channel) !in withCombined }
+        for (ch in Channel.entries) {
+            val refs = timed.filter { it.channel == ch }.map { it.timingReference.trim() }.toSet()
             if (refs.size > 1) err("${ch.label}: more than one timing reference", "Found ${refs.joinToString()}. Every ${ch.label.lowercase()} sweep must use the same unchanged timing reference.")
             if (refs.any { it.isEmpty() }) err("${ch.label}: missing timing reference", "Enter the timing-reference ID used for each sweep.")
         }

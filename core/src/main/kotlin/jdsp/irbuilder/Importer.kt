@@ -198,6 +198,24 @@ object Importer {
      * semicolon-separated, and a comma as the decimal point: "20.0 85.3 120.1",
      * "20.0,85.3,120.1", "20,0;85,3;120,1" and "20,0 85,3 120,1" all read the same.
      */
+    /**
+     * A frequency/SPL row without phase, or null: "20.0 85.3", "20,0;85,3", "20,0 85,3", and CSV
+     * "20.0,85.3". A comma is only taken as the column separator when the line has a decimal
+     * point, since "20,5" alone is one number written with a decimal comma.
+     */
+    internal fun twoNumbers(line: String): List<Double>? {
+        val t = line.trim()
+        if (t.isEmpty()) return null
+        val spaced = t.split(spaceOrSemicolon).map { it.trimEnd(',') }.filter { it.isNotEmpty() }
+        val parts = when {
+            spaced.size == 2 -> spaced.map { it.replace(',', '.') }
+            spaced.size == 1 && '.' in t -> t.split(',').map { it.trim() }
+            else -> return null
+        }
+        if (parts.size != 2) return null
+        return parts.map { it.toDoubleOrNull() ?: return null }
+    }
+
     internal fun rowNumbers(line: String): DoubleArray? {
         val t = line.trim()
         if (t.isEmpty()) return null
@@ -255,12 +273,12 @@ object Importer {
             if (row == null) {
                 if (line.trim().replace(',', '.').toDoubleOrNull() != null) singleNumbers++
                 // Two numbers and nothing else: an export without the phase column.
-                val two = line.trim().split(spaceOrSemicolon).filter { it.isNotEmpty() }
-                if (two.size == 2 && two.all { it.replace(',', '.').toDoubleOrNull() != null }) {
+                val two = twoNumbers(line)
+                if (two != null) {
                     phaseMissing = true
                     // Magnitude only: frequency and SPL are all that's needed.
                     if (magnitudeOnly) {
-                        val (freq, db) = two.map { it.replace(',', '.').toDouble() }
+                        val (freq, db) = two
                         if (freq.isFinite() && db.isFinite() && freq > 0.0 && (f.isEmpty() || freq > f.last())) { f += freq; spl += db; deg += 0.0 }
                     }
                 }
