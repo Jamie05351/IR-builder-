@@ -8,6 +8,9 @@ plugins {
 
 kotlin { jvmToolchain(21) }
 
+// The screens are shared with the Android app; only the dialogs and the window live here.
+sourceSets.main { kotlin.srcDir("../shared-ui/src/main/kotlin") }
+
 dependencies {
     implementation(project(":core"))
     implementation(compose.desktop.currentOs)
@@ -17,7 +20,7 @@ dependencies {
 
 compose.desktop {
     application {
-        mainClass = "jdsp.irbuilder.ui.MainKt"
+        mainClass = "jdsp.irbuilder.ui.DesktopMainKt"
         nativeDistributions {
             targetFormats(TargetFormat.Exe)
             packageName = "JDSP-IR-Builder"

@@ -48,7 +48,7 @@ fun FinderScreen(state: AppState) {
         Panel("J_DSP crossovers during the sweeps", accent = Jdsp.LightBlue) {
             Note("Enter exactly what J_DSP's Crossover pages had when you measured (they're the same for left and right).")
             val x = f.current
-            Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.Bottom) {
+            WrapRow(20.dp, Alignment.Bottom) {
                 FilterInput(XoSlot.LOW_LOWPASS, x.lowLowpass) { setXo(x.copy(lowLowpass = it)) }
                 FilterInput(XoSlot.MID_HIGHPASS, x.midHighpass) { setXo(x.copy(midHighpass = it)) }
                 Labeled("Subsonic") { GlassSwitch(x.subsonic, { setXo(x.copy(subsonic = it)) }) }
@@ -57,7 +57,7 @@ fun FinderScreen(state: AppState) {
                     Labeled("Subsonic slope") { GlassDropdown(x.subsonicBw2, listOf(false, true), { if (it) "BW2" else "LR4" }, { setXo(x.copy(subsonicBw2 = it)) }, width = 90.dp) }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.Bottom) {
+            WrapRow(20.dp, Alignment.Bottom) {
                 Labeled("3-way") { GlassSwitch(x.threeWay, { setXo(x.copy(threeWay = it)) }) }
                 if (x.threeWay) {
                     FilterInput(XoSlot.MID_LOWPASS, x.midLowpass) { setXo(x.copy(midLowpass = it)) }
@@ -67,24 +67,9 @@ fun FinderScreen(state: AppState) {
         }
         Panel("J_DSP delays and polarity during the sweeps", accent = Jdsp.LightBlue) {
             Note("As on J_DSP's Alignment › DELAY page. A new crossover turns the bands' phase, so each side's Low (at Low/Mid) and High (at Mid/High) delay and polarity are searched with it, 0–${trimNumber(BandAlign.DELAY_MAX_MS)} ms.")
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("", modifier = Modifier.width(70.dp))
-                for (ch in Channel.entries) {
-                    Text("${ch.label} delay (ms)", color = Jdsp.TextDim, fontSize = 12.sp, modifier = Modifier.width(110.dp))
-                    Text("${ch.label} inverted", color = Jdsp.TextDim, fontSize = 12.sp, modifier = Modifier.width(100.dp))
-                }
-            }
-            for (band in Band.BRANCHES) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(band.label, color = bandColor(band), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(70.dp))
-                    for (ch in Channel.entries) {
-                        val s = f.timing.get(band, ch)
-                        NumberField(s.delayMs, { v -> set(f.copy(timing = f.timing.with(band, ch, s.copy(delayMs = v)))) }, accent = bandColor(band))
-                        Row(Modifier.width(100.dp)) {
-                            GlassSwitch(s.inverted, { v -> set(f.copy(timing = f.timing.with(band, ch, s.copy(inverted = v)))) }, accent = Jdsp.MRed)
-                        }
-                    }
-                }
+            TimingGrid(f.timing) { band, ch, delay, inverted ->
+                val s = f.timing.get(band, ch)
+                set(f.copy(timing = f.timing.with(band, ch, s.copy(delayMs = delay ?: s.delayMs, inverted = inverted ?: s.inverted))))
             }
         }
         Panel("Search limits", accent = Jdsp.Orange) {
@@ -98,7 +83,7 @@ fun FinderScreen(state: AppState) {
                 Text(xo.label, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 for (s in XoSlot.of(xo).toList()) LimitsRow(s, f) { set(f.withLimits(s, it)) }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            WrapRow(12.dp) {
                 GlassButton("Suggest from measurements", { state.suggestFinderLimits() }, accent = Jdsp.Orange, enabled = state.measurements.isNotEmpty() && state.finderError == null && state.busy == null)
                 if (f.limits.isNotEmpty()) GlassButton("Reset limits to defaults", { set(f.copy(limits = emptyMap())) }, accent = Jdsp.TextDim)
             }
@@ -111,7 +96,7 @@ fun FinderScreen(state: AppState) {
             }
         }
         Panel("Run", accent = Jdsp.MGreen) {
-            Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.Bottom) {
+            WrapRow(24.dp, Alignment.Bottom) {
                 Labeled("Low/Mid") { GlassSwitch(f.lowMid, { set(f.copy(lowMid = it)) }) }
                 Labeled("Mid/High") { GlassSwitch(f.midHigh, { set(f.copy(midHigh = it)) }) }
                 GlassButton(
@@ -130,14 +115,14 @@ fun FinderScreen(state: AppState) {
             } else {
                 if (r.filterChanges.isNotEmpty()) Text("Crossover pages", color = Jdsp.TextDim, fontSize = 12.sp)
                 r.filterChanges.forEach { c ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    WrapRow(12.dp) {
                         Text(c.slot.label, color = bandColor(c.slot.band), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(130.dp))
                         Text("${c.from.label}  →  ${c.to.label}", color = Color.White, fontSize = 15.sp)
                     }
                 }
                 if (r.timingChanges.isNotEmpty()) Text("Alignment › DELAY page", color = Jdsp.TextDim, fontSize = 12.sp)
                 r.timingChanges.forEach { c ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    WrapRow(12.dp) {
                         Text(c.label, color = bandColor(c.band), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(130.dp))
                         Text(settingText(c.from) + "  →  " + settingText(c.to), color = Color.White, fontSize = 15.sp)
                     }
@@ -163,12 +148,12 @@ private fun FilterInput(slot: XoSlot, value: XoFilter, onChange: (XoFilter) -> U
 @Composable
 private fun LimitsRow(slot: XoSlot, f: FinderOptions, onChange: (SlotLimits) -> Unit) {
     val l = f.limits(slot)
-    Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+    WrapRow(14.dp, Alignment.CenterVertically) {
         Text(slot.label, color = bandColor(slot.band), fontSize = 13.sp, modifier = Modifier.width(110.dp))
         Text("now ${f.current.get(slot).label}", color = Jdsp.TextDim, fontSize = 12.sp, modifier = Modifier.width(120.dp))
         Labeled("Lowest (Hz)") { NumberField(l.minHz, { onChange(l.copy(minHz = it)) }, width = 80.dp, accent = bandColor(slot.band)) }
         Labeled("Highest (Hz)") { NumberField(l.maxHz, { onChange(l.copy(maxHz = it)) }, width = 80.dp, accent = bandColor(slot.band)) }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        WrapRow(6.dp) {
             XoType.entries.forEach { t ->
                 Chip(t.label, t in l.types, { onChange(l.copy(types = if (t in l.types) l.types - t else l.types + t)) }, bandColor(slot.band))
             }
@@ -181,7 +166,7 @@ private fun FinderResultPanel(res: FinderResult, freqs: DoubleArray) {
     val (loSlot, upSlot) = XoSlot.of(res.crossover)
     val accent = if (res.crossover == Crossover.LOW_MID) Jdsp.LowBand else Jdsp.HighBand
     Panel(res.crossover.label, accent = accent) {
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+        WrapRow(16.dp, Alignment.CenterVertically) {
             Badge(if (!res.changed) "No change" else "+%.2f dB through the crossover (seat-weighted)".format(res.scoreDb), if (res.changed) Jdsp.MGreen else Jdsp.TextDim)
             Text("${loSlot.label} ${res.lower.label} · ${upSlot.label} ${res.upper.label}", color = Color.White, fontSize = 14.sp)
         }
