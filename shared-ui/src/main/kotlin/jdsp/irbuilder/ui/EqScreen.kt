@@ -19,7 +19,6 @@ import jdsp.irbuilder.EqSide
 import jdsp.irbuilder.EqSideResult
 import jdsp.irbuilder.EqWizard
 import jdsp.irbuilder.Seat
-import java.awt.Desktop
 import kotlin.math.ceil
 import kotlin.math.floor
 
@@ -39,11 +38,11 @@ fun EqScreen(state: AppState) {
         }
         HouseCurvePanel(state)
         Panel("Fit and limits", accent = Jdsp.LightBlue) {
-            Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.Bottom) {
+            WrapRow(18.dp, Alignment.Bottom) {
                 Labeled("Fit from (Hz)") { NumberField(e.minHz, { set(e.copy(minHz = it)) }, width = 90.dp) }
                 Labeled("Fit to (Hz)") { NumberField(e.maxHz, { set(e.copy(maxHz = it)) }, width = 90.dp) }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.Bottom) {
+            WrapRow(18.dp, Alignment.Bottom) {
                 Labeled("Bands per side") { NumberField(e.maxBands.toDouble(), { set(e.copy(maxBands = it.toInt())) }, width = 80.dp) }
                 Labeled("Max boost (dB)") { NumberField(e.maxBoostDb, { set(e.copy(maxBoostDb = it)) }, width = 80.dp) }
                 Labeled("Max cut (dB)") { NumberField(e.maxCutDb, { set(e.copy(maxCutDb = it)) }, width = 80.dp) }
@@ -57,10 +56,10 @@ fun EqScreen(state: AppState) {
         val r = state.eqResult ?: return@Column
         r.warnings.forEach { Note("• $it", Jdsp.MidYellow) }
         Panel("Export for J_DSP", accent = Jdsp.MGreen) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                GlassButton("Save PEQ file…", { Dialogs.saveFile("Save PEQ file", EqWizard.EXPORT_FILE)?.let(state::exportEq) }, accent = Jdsp.MGreen, enabled = state.busy == null)
+            WrapRow(12.dp, Alignment.CenterVertically) {
+                GlassButton("Save PEQ file…", { Dialogs.saveFile("Save PEQ file", EqWizard.EXPORT_FILE) { state.exportEq(it) } }, accent = Jdsp.MGreen, enabled = state.busy == null)
                 state.eqExported?.let { file ->
-                    GlassButton("Open folder", { runCatching { Desktop.getDesktop().open(file.parentFile) } }, accent = Jdsp.LightBlue)
+                    GlassButton(Dialogs.REVEAL_LABEL, { Dialogs.reveal(file) }, accent = Jdsp.LightBlue)
                     Text(file.path, color = Jdsp.MGreen, fontSize = 13.sp)
                 }
             }
@@ -81,22 +80,22 @@ private fun HouseCurvePanel(state: AppState) {
     val e = state.eq
     fun set(n: EqOptions) = state.updateEq(n)
     Panel("House curve", accent = Jdsp.Cyan) {
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        WrapRow(10.dp, Alignment.CenterVertically) {
             Chip("Built-in", !e.useCurve, { set(e.copy(useCurve = false)) }, Jdsp.Cyan)
             Chip("Custom curve", e.useCurve, {
                 set(e.copy(useCurve = true, curve = e.curve.ifEmpty { HouseCurve.fromBuiltIn(e) }))
             }, Jdsp.Cyan)
         }
         if (!e.useCurve) {
-            Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.Bottom) {
+            WrapRow(18.dp, Alignment.Bottom) {
                 Labeled("Bass lift (dB)") { NumberField(e.bassLiftDb, { set(e.copy(bassLiftDb = it)) }, width = 90.dp, accent = Jdsp.LowBand) }
                 Labeled("Treble tilt 1–10 kHz (dB)") { NumberField(e.trebleTiltDb, { set(e.copy(trebleTiltDb = it)) }, width = 90.dp, accent = Jdsp.HighBand) }
             }
             Note("A low-shelf lift centred near 100 Hz and a straight tilt from 1 kHz to 10 kHz. For any other shape, use a custom curve.")
         } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                GlassButton("Import curve…", { Dialogs.openFiles("Import house curve", listOf("txt", "csv", "frd", "cal"), multiple = false)?.firstOrNull()?.let(state::importCurve) }, accent = Jdsp.Cyan, enabled = state.busy == null)
-                GlassButton("Save curve…", { Dialogs.saveFile("Save house curve", "house-curve.txt")?.let(state::saveCurve) }, enabled = e.curve.size >= 2 && state.busy == null)
+            WrapRow(10.dp) {
+                GlassButton("Import curve…", { Dialogs.openFiles("Import house curve", listOf("txt", "csv", "frd", "cal"), multiple = false) { it.firstOrNull()?.let(state::importCurve) } }, accent = Jdsp.Cyan, enabled = state.busy == null)
+                GlassButton("Save curve…", { Dialogs.saveFile("Save house curve", "house-curve.txt") { state.saveCurve(it) } }, enabled = e.curve.size >= 2 && state.busy == null)
                 GlassButton("Start from built-in", { set(e.copy(curve = HouseCurve.fromBuiltIn(e))) }, accent = Jdsp.TextDim)
                 GlassButton("Add point", {
                     val last = e.curve.maxByOrNull { it.hz }
@@ -115,7 +114,7 @@ private fun HouseCurvePanel(state: AppState) {
             }
             if (pts.size <= 40) {
                 pts.forEachIndexed { i, p ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    WrapRow(12.dp, Alignment.CenterVertically) {
                         Text("${i + 1}", color = Jdsp.TextDim, fontSize = 12.sp, modifier = Modifier.width(24.dp))
                         NumberField(p.hz, { v -> set(e.copy(curve = pts.map { if (it == p) it.copy(hz = v) else it }.sortedBy { it.hz })) }, width = 100.dp)
                         Text("Hz", color = Jdsp.TextDim, fontSize = 12.sp)
@@ -134,7 +133,7 @@ private fun SidePanel(s: EqSideResult, f: DoubleArray, e: EqOptions) {
     val accent = when (s.side) { EqSide.LEFT -> Jdsp.LightBlue; EqSide.RIGHT -> Jdsp.HighPink; EqSide.BOTH -> Jdsp.Cyan }
     val name = when (s.side) { EqSide.LEFT -> "Left side"; EqSide.RIGHT -> "Right side"; EqSide.BOTH -> "Both sides (L+R)" }
     Panel(name, accent = accent) {
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        WrapRow(16.dp) {
             Badge("RMS from target %.1f → %.1f dB".format(s.rmsBeforeDb, s.rmsAfterDb), if (s.rmsAfterDb < s.rmsBeforeDb) Jdsp.MGreen else Jdsp.MidYellow)
             Text("${s.bands.size} band(s)", color = Jdsp.TextDim, fontSize = 13.sp)
         }
@@ -155,15 +154,17 @@ private fun SidePanel(s: EqSideResult, f: DoubleArray, e: EqOptions) {
             LinePlot(listOf(ser("EQ", s.eqDb, accent, 2.5f), ser("Wanted", s.wantedDb, Jdsp.TextDim, 1.5f, dashed = true)), -14.0, 8.0, "dB", height = 160.dp, accent = accent)
             Note("Lower plot: the EQ's own curve, and what it was asked to do (target − response, boosts held back where the octave-wide response doesn't lack it).")
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            listOf("#" to 30, "Type" to 50, "Side" to 50, "Frequency" to 110, "Gain" to 90, "Q" to 70).forEach { (t, w) -> Text(t, color = Jdsp.TextDim, fontSize = 12.sp, modifier = Modifier.width(w.dp)) }
-        }
-        s.bands.forEachIndexed { i, b ->
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Cell("${i + 1}", 30); Cell("PK", 50); Cell(b.side.label, 50)
-                Cell("${trimNumber(b.hz)} Hz", 110, Color.White)
-                Cell("%+.1f dB".format(b.gainDb), 90, if (b.gainDb > 0) Jdsp.MidYellow else Jdsp.MGreen)
-                Cell(trimNumber(b.q), 70)
+        Table {
+            TableRow {
+                listOf("#" to 30, "Type" to 50, "Side" to 50, "Frequency" to 110, "Gain" to 90, "Q" to 70).forEach { (t, w) -> Text(t, color = Jdsp.TextDim, fontSize = 12.sp, modifier = Modifier.width(w.dp)) }
+            }
+            s.bands.forEachIndexed { i, b ->
+                TableRow {
+                    Cell("${i + 1}", 30); Cell("PK", 50); Cell(b.side.label, 50)
+                    Cell("${trimNumber(b.hz)} Hz", 110, Color.White)
+                    Cell("%+.1f dB".format(b.gainDb), 90, if (b.gainDb > 0) Jdsp.MidYellow else Jdsp.MGreen)
+                    Cell(trimNumber(b.q), 70)
+                }
             }
         }
         Text("", fontSize = 4.sp, fontWeight = FontWeight.Normal)

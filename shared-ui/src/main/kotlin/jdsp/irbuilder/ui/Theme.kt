@@ -1,5 +1,7 @@
 package jdsp.irbuilder.ui
 
+import androidx.compose.foundation.horizontalScroll
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -129,7 +131,15 @@ fun Panel(
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        if (LocalCompact.current) {
+            // Phone: the title, then its buttons beneath when they don't fit beside it.
+            WrapRow(10.dp, Alignment.CenterVertically) {
+                Box(Modifier.glassBox(accent, borderAlpha = 0.6f).padding(horizontal = 12.dp, vertical = 5.dp)) {
+                    Text(title.uppercase(), color = accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp)
+                }
+                trailing()
+            }
+        } else Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.glassBox(accent, borderAlpha = 0.6f).padding(horizontal = 12.dp, vertical = 5.dp)) {
                 Text(title.uppercase(), color = accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp)
             }
@@ -247,3 +257,42 @@ fun bandColor(b: jdsp.irbuilder.Band) = when (b) {
     jdsp.irbuilder.Band.HIGH -> Jdsp.HighBand
     jdsp.irbuilder.Band.COMBINED -> Jdsp.Cyan
 }
+
+/** True on a narrow (phone portrait) layout: no sidebar, wrapping rows, card lists. */
+val LocalCompact = androidx.compose.runtime.staticCompositionLocalOf { false }
+
+/** The width below which the layout goes compact (a phone in portrait is ~412 dp). */
+val COMPACT_WIDTH = 700.dp
+
+/**
+ * A row of controls that wraps onto further lines when it runs out of width (a phone), and is an
+ * ordinary row when everything fits (the PC window).
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+fun WrapRow(
+    spacing: androidx.compose.ui.unit.Dp = 10.dp,
+    verticalAlignment: Alignment.Vertical = Alignment.Top,
+    modifier: Modifier = Modifier,
+    content: @Composable androidx.compose.foundation.layout.FlowRowScope.() -> Unit,
+) = androidx.compose.foundation.layout.FlowRow(
+    modifier,
+    horizontalArrangement = Arrangement.spacedBy(spacing),
+    verticalArrangement = Arrangement.spacedBy(8.dp),
+    itemVerticalAlignment = verticalAlignment,
+    content = content,
+)
+
+/** A table with fixed-width columns: on a phone it scrolls sideways instead of squashing. */
+@Composable
+fun Table(content: @Composable ColumnScope.() -> Unit) = Column(
+    if (LocalCompact.current) Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState()) else Modifier,
+    verticalArrangement = Arrangement.spacedBy(6.dp),
+    content = content,
+)
+
+/** One row of a [Table]: never wraps, so its columns stay lined up. */
+@Composable
+fun TableRow(spacing: androidx.compose.ui.unit.Dp = 10.dp, content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) =
+    Row(horizontalArrangement = Arrangement.spacedBy(spacing), verticalAlignment = Alignment.CenterVertically, content = content)
+

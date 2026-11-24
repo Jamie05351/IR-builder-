@@ -386,6 +386,7 @@ class AppState(private var scope: CoroutineScope) {
         val f = if (file.extension.isEmpty()) File(file.path + ".txt") else file
         withContext(Dispatchers.IO) { f.writeText(jdsp.irbuilder.HouseCurve.text(eq.curve.sortedBy { it.hz })) }
         status = "Saved ${f.name}"
+        Dialogs.written(f)
     }
 
     fun exportEq(file: File) = background("Writing PEQ file…") {
@@ -394,6 +395,7 @@ class AppState(private var scope: CoroutineScope) {
         withContext(Dispatchers.IO) { f.writeText(jdsp.irbuilder.EqWizard.apoText(r)) }
         eqExported = f
         status = "Exported ${f.path}"
+        Dialogs.written(f)
     }
 
     /** Reads each driver path's usable range from the sweeps and narrows the Finder's limits to it. */
@@ -472,6 +474,7 @@ class AppState(private var scope: CoroutineScope) {
         exportDir = dir
         exportedZip = zip
         status = "Exported ${zip.path}"
+        Dialogs.written(zip)
     }
 
     fun saveProject(file: File) = background("Saving project…") {
@@ -479,6 +482,7 @@ class AppState(private var scope: CoroutineScope) {
         withContext(Dispatchers.IO) { Project.save(Project(tool = tool, measurements = measurements.toList(), options = options, align = align, finder = finder, eq = eq), f) }
         projectFile = f
         status = "Saved ${f.name}"
+        Dialogs.written(f)
     }
 
     fun openProject(file: File) = background("Opening project…") {

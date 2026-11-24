@@ -51,3 +51,44 @@ jobs:
         with:
           name: JDSP-IR-Builder-portable
           path: JDSP-IR-Builder-portable.zip
+
+  android:
+    name: Android app
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v6
+      # Robolectric's Android runtime (~150 MB) comes from Maven Central, which sometimes answers
+      # 429 Too Many Requests: keep it cached between runs, and retry the download with a pause.
+      - uses: actions/cache@v5
+        with:
+          path: android/build/robolectric-jars
+          key: robolectric-${{ hashFiles('android/build.gradle.kts') }}
+      - name: Fetch the Robolectric runtime
+        run: |
+          for i in 1 2 3 4 5; do
+            ./gradlew --no-daemon :android:robolectricJars && exit 0
+            echo "Download failed (attempt $i), retrying in $((i * 30)) s"; sleep $((i * 30))
+          done
+          exit 1
+      # The runner's Android SDK (ANDROID_HOME). Each build gets a higher version code so a new
+      # APK installs over the previous one; all are signed with android/sideload.keystore.
+      - name: Test and build the APK
+        run: ./gradlew --no-daemon "-PappVersion=1.1.${{ github.run_number }}" "-PappVersionCode=${{ github.run_number }}" :android:testDebugUnitTest :android:assembleRelease
+      - name: Name the APK
+        run: cp android/build/outputs/apk/release/android-release.apk "JDSP-IR-Builder-1.1.${{ github.run_number }}.apk"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: JDSP-IR-Builder-android
+          path: JDSP-IR-Builder-*.apk
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-test-reports
+          path: android/build/reports/tests/
+

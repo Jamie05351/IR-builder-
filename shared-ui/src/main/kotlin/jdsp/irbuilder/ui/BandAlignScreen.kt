@@ -36,29 +36,14 @@ fun BandAlignScreen(state: AppState) {
         Panel("J_DSP delays and polarity during the sweeps", accent = Jdsp.LightBlue) {
             Note("Enter exactly what J_DSP had when you measured (Alignment › DELAY page). Proposals are moves from these values, 0–${trimNumber(BandAlign.DELAY_MAX_MS)} ms in 0.01 ms steps.")
             Note("Scored around the crossovers set on the Checks page: Low/Mid ${trimNumber(state.options.lowMidHz)} Hz, Mid/High ${trimNumber(state.options.midHighHz)} Hz. Check they match J_DSP.", Jdsp.LightBlue)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("", modifier = Modifier.width(70.dp))
-                for (ch in Channel.entries) {
-                    Text("${ch.label} delay (ms)", color = Jdsp.TextDim, fontSize = 12.sp, modifier = Modifier.width(110.dp))
-                    Text("${ch.label} inverted", color = Jdsp.TextDim, fontSize = 12.sp, modifier = Modifier.width(100.dp))
-                }
-            }
-            for (band in Band.BRANCHES) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(band.label, color = bandColor(band), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(70.dp))
-                    for (ch in Channel.entries) {
-                        val s = a.timing.get(band, ch)
-                        NumberField(s.delayMs, { v -> state.updateAlign(a.copy(timing = a.timing.with(band, ch, s.copy(delayMs = v)))) }, accent = bandColor(band))
-                        Row(Modifier.width(100.dp)) {
-                            GlassSwitch(s.inverted, { v -> state.updateAlign(a.copy(timing = a.timing.with(band, ch, s.copy(inverted = v)))) }, accent = Jdsp.MRed)
-                        }
-                    }
-                }
+            TimingGrid(a.timing) { band, ch, delay, inverted ->
+                val s = a.timing.get(band, ch)
+                state.updateAlign(a.copy(timing = a.timing.with(band, ch, s.copy(delayMs = delay ?: s.delayMs, inverted = inverted ?: s.inverted))))
             }
             state.alignError?.let { Note(it, Jdsp.MRed) }
         }
         Panel("Run", accent = Jdsp.MGreen) {
-            Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.Bottom) {
+            WrapRow(24.dp, Alignment.Bottom) {
                 Labeled("Low against Mid") { GlassSwitch(a.lowMid, { state.updateAlign(a.copy(lowMid = it)) }) }
                 Labeled("High against Mid") { GlassSwitch(a.midHigh, { state.updateAlign(a.copy(midHigh = it)) }) }
                 GlassButton(
@@ -74,7 +59,7 @@ fun BandAlignScreen(state: AppState) {
                 Note(if (r.error == null) "No change beats the current settings by ${trimNumber(BandAlign.MIN_IMPROVEMENT_DB)} dB without making a seat worse. Leave the delays and polarity as they are." else "No changes can be applied.")
             } else {
                 r.changes.forEach { c ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    WrapRow(12.dp) {
                         Text(c.label, color = bandColor(c.band), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(80.dp))
                         Text(settingText(c.from) + "  →  " + settingText(c.to), color = Color.White, fontSize = 15.sp)
                     }
@@ -96,7 +81,7 @@ private fun ResultPanel(res: AlignResult, freqs: DoubleArray) {
     val accent = bandColor(res.pair.moving)
     Panel("${res.channel.label} · ${res.pair.label}", accent = accent) {
         val p = res.proposal
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+        WrapRow(16.dp, Alignment.CenterVertically) {
             Badge(if (p == null) "No change" else "${res.pair.moving.label} ${res.channel.name}: ${settingText(res.current)} → ${settingText(p)}", if (p == null) Jdsp.TextDim else Jdsp.MGreen)
             if (p != null) Text("sum loss reduced by %.2f dB in the crossover region (seat-weighted)".format(res.scoreDb), color = Jdsp.TextDim, fontSize = 13.sp)
         }
@@ -125,3 +110,38 @@ private fun ResultPanel(res: AlignResult, freqs: DoubleArray) {
         Note("Per position: $positions")
     }
 }
+
+/**
+ * J_DSP's six band delays and polarities as a grid: a band per row, each side's delay and
+ * inversion. Narrower columns and short headings on a phone, so it fits without scrolling.
+ * [onChange] gets the new delay or the new inversion (the other is null).
+ */
+@Composable
+fun TimingGrid(timing: jdsp.irbuilder.JdspTiming, onChange: (Band, Channel, Double?, Boolean?) -> Unit) {
+    val compact = LocalCompact.current
+    val labelW = if (compact) 48.dp else 70.dp
+    val fieldW = if (compact) 78.dp else 110.dp
+    val switchW = if (compact) 56.dp else 100.dp
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 12.dp)) {
+            Text("", modifier = Modifier.width(labelW))
+            for (ch in Channel.entries) {
+                Text(if (compact) "${ch.name} ms" else "${ch.label} delay (ms)", color = Jdsp.TextDim, fontSize = 12.sp, modifier = Modifier.width(fieldW))
+                Text(if (compact) "${ch.name} inv" else "${ch.label} inverted", color = Jdsp.TextDim, fontSize = 12.sp, modifier = Modifier.width(switchW))
+            }
+        }
+        for (band in Band.BRANCHES) {
+            Row(horizontalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(band.label, color = bandColor(band), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(labelW))
+                for (ch in Channel.entries) {
+                    val s = timing.get(band, ch)
+                    NumberField(s.delayMs, { v -> onChange(band, ch, v, null) }, width = fieldW, accent = bandColor(band))
+                    Row(Modifier.width(switchW)) {
+                        GlassSwitch(s.inverted, { v -> onChange(band, ch, null, v) }, accent = Jdsp.MRed)
+                    }
+                }
+            }
+        }
+    }
+}
+

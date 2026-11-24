@@ -20,7 +20,6 @@ import jdsp.irbuilder.Channel
 import jdsp.irbuilder.Exporter
 import jdsp.irbuilder.Seat
 import jdsp.irbuilder.StereoDesign
-import java.awt.Desktop
 import kotlin.math.abs
 import kotlin.math.ceil
 
@@ -39,13 +38,13 @@ fun StereoPreview(d: StereoDesign) {
     val shades = listOf(Shade(o.stereoMinHz, o.stereoMaxHz, Jdsp.Cyan.copy(alpha = 0.06f)))
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Panel("Select", accent = Jdsp.LightBlue) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            WrapRow(8.dp, Alignment.CenterVertically) {
                 Text("Channel", color = Jdsp.TextDim, fontSize = 12.sp)
                 Channel.entries.forEach { c -> Chip(c.label, channel == c, { channel = c }) }
                 Text("   View", color = Jdsp.TextDim, fontSize = 12.sp)
                 Seat.entries.forEach { s -> Chip("${s.label} average", view == StereoView.SeatAvg(s), { view = StereoView.SeatAvg(s) }, Jdsp.Purple) }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            WrapRow(8.dp) {
                 d.groups(channel).forEach { g ->
                     val v = StereoView.Position(g.key.seat, g.key.position)
                     Chip("${g.key.seat.label} · ${g.key.position}" + if (g.validationOnly) " (val.)" else "", view == v, { view = v }, if (g.validationOnly) Jdsp.Orange else Jdsp.LightBlue)
@@ -92,23 +91,25 @@ fun StereoPreview(d: StereoDesign) {
         }
         Panel("Predicted results", accent = Jdsp.MGreen) {
             Note("RMS phase deviation from a pure delay over the stereo range, and the spread of group delay, before → predicted.")
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            fun color(b: Double, a: Double) = if (a > b + 1e-9) Jdsp.MRed else Jdsp.MGreen
+            Table {
+            TableRow {
                 listOf("Where" to 300, "Phase deviation" to 200, "Group-delay spread" to 200).forEach { (t, w) -> Text(t, color = Jdsp.TextDim, fontSize = 12.sp, modifier = Modifier.width(w.dp)) }
             }
-            fun color(b: Double, a: Double) = if (a > b + 1e-9) Jdsp.MRed else Jdsp.MGreen
             d.report.seats.forEach { s ->
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TableRow {
                     Cell("${s.seat.label} ${s.channel.name} average (${s.positions})", 300, Jdsp.Purple)
                     Cell("%.0f° → %.0f°".format(s.beforeRmsDeg, s.afterRmsDeg), 200, color(s.beforeRmsDeg, s.afterRmsDeg))
                     Cell("%.2f → %.2f ms".format(s.beforeGroupDelaySpreadMs, s.afterGroupDelaySpreadMs), 200, color(s.beforeGroupDelaySpreadMs, s.afterGroupDelaySpreadMs))
                 }
             }
             d.report.positions.forEach { p ->
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TableRow {
                     Cell("${p.seat.label} · ${p.position} · ${p.channel.name}" + (if (p.validationOnly) " (val.)" else "") + if (p.deteriorated) "  ▲ worse" else "", 300, if (p.deteriorated) Jdsp.MRed else Color.White)
                     Cell("%.0f° → %.0f°".format(p.beforeRmsDeg, p.afterRmsDeg), 200, color(p.beforeRmsDeg, p.afterRmsDeg))
                     Cell("%.2f → %.2f ms".format(p.beforeGroupDelaySpreadMs, p.afterGroupDelaySpreadMs), 200, color(p.beforeGroupDelaySpreadMs, p.afterGroupDelaySpreadMs))
                 }
+            }
             }
             Text("Warnings", color = Jdsp.MidYellow, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             d.report.warnings.forEach { Note("• $it") }
@@ -126,10 +127,10 @@ fun StereoExport(state: AppState, d: StereoDesign) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Panel("Export for J_DSP", accent = Jdsp.MGreen) {
             Note("Writes ${Exporter.STEREO_FILE} (stereo float32, ${o.sampleRate} Hz, ${o.taps} taps), report.json and README.txt, for the convolver page's Stereo slot.", Color.White)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                GlassButton("Choose folder and export…", { Dialogs.chooseFolder("Export stereo IR", state.exportDir)?.let(state::export) }, accent = Jdsp.MGreen, enabled = state.busy == null)
+            WrapRow(12.dp, Alignment.CenterVertically) {
+                GlassButton("Choose folder and export…", { Dialogs.chooseFolder("Export stereo IR", state.exportDir) { state.export(it) } }, accent = Jdsp.MGreen, enabled = state.busy == null)
                 state.exportedZip?.let { file ->
-                    GlassButton("Open folder", { runCatching { Desktop.getDesktop().open(file.parentFile) } }, accent = Jdsp.LightBlue)
+                    GlassButton(Dialogs.REVEAL_LABEL, { Dialogs.reveal(file) }, accent = Jdsp.LightBlue)
                     Text(file.path, color = Jdsp.MGreen, fontSize = 13.sp)
                 }
             }

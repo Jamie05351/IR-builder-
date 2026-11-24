@@ -23,7 +23,6 @@ import jdsp.irbuilder.Crossover
 import jdsp.irbuilder.PhaseDesign
 import jdsp.irbuilder.RegionMetrics
 import jdsp.irbuilder.Seat
-import java.awt.Desktop
 import kotlin.math.log10
 import kotlin.math.pow
 
@@ -51,13 +50,13 @@ fun PreviewScreen(state: AppState) {
     }
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Panel("Select", accent = Jdsp.LightBlue) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            WrapRow(8.dp, Alignment.CenterVertically) {
                 Text("Channel", color = Jdsp.TextDim, fontSize = 12.sp)
                 Channel.entries.forEach { c -> Chip(c.label, channel == c, { channel = c }) }
                 Text("   View", color = Jdsp.TextDim, fontSize = 12.sp)
                 Seat.entries.forEach { s -> Chip("${s.label} average", view == View.SeatAvg(s), { view = View.SeatAvg(s) }, Jdsp.Purple) }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            WrapRow(8.dp) {
                 d.set.groups.filter { it.key.channel == channel && it.crossovers().isNotEmpty() }.forEach { g ->
                     val v = View.Position(g.key.seat, g.key.position)
                     Chip("${g.key.seat.label} · ${g.key.position}" + if (g.validationOnly) " (val.)" else "", view == v, { view = v }, if (g.validationOnly) Jdsp.Orange else Jdsp.LightBlue)
@@ -124,11 +123,13 @@ fun PreviewScreen(state: AppState) {
 private fun ResultsPanel(d: PhaseDesign) {
     Panel("Predicted results", accent = Jdsp.MGreen) {
         Note("Mean and worst summation efficiency in each correction region, before → predicted. Validation-only positions were not used for the fit.")
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            listOf("Where" to 260, "Low/Mid mean" to 150, "Low/Mid worst" to 150, "Mid/High mean" to 150, "Mid/High worst" to 150, "Level change (max)" to 150).forEach { (t, w) -> Text(t, color = Jdsp.TextDim, fontSize = 12.sp, modifier = Modifier.width(w.dp)) }
+        Table {
+            TableRow {
+                listOf("Where" to 260, "Low/Mid mean" to 150, "Low/Mid worst" to 150, "Mid/High mean" to 150, "Mid/High worst" to 150, "Level change (max)" to 150).forEach { (t, w) -> Text(t, color = Jdsp.TextDim, fontSize = 12.sp, modifier = Modifier.width(w.dp)) }
+            }
+            d.report.seats.forEach { s -> ResultRow("${s.seat.label} ${s.channel.name} average (${s.positions})", s.regions, false, Jdsp.Purple) }
+            d.report.positions.forEach { p -> ResultRow("${p.seat.label} · ${p.position} · ${p.channel.name}" + if (p.validationOnly) " (val.)" else "", p.regions, p.deteriorated, Color.White) }
         }
-        d.report.seats.forEach { s -> ResultRow("${s.seat.label} ${s.channel.name} average (${s.positions})", s.regions, false, Jdsp.Purple) }
-        d.report.positions.forEach { p -> ResultRow("${p.seat.label} · ${p.position} · ${p.channel.name}" + if (p.validationOnly) " (val.)" else "", p.regions, p.deteriorated, Color.White) }
         Text("Warnings", color = Jdsp.MidYellow, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         d.report.warnings.forEach { Note("• $it") }
         Text("Per-band filters", color = Jdsp.TextDim, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
@@ -153,7 +154,7 @@ private fun ResultRow(label: String, regions: List<RegionMetrics>, bad: Boolean,
         else if (mean) Cell(cell(r.beforeMeanDb, r.afterMeanDb), 150, c(r.beforeMeanDb, r.afterMeanDb))
         else Cell(cell(r.beforeWorstDb, r.afterWorstDb), 150, c(r.beforeWorstDb, r.afterWorstDb))
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    TableRow {
         Cell(label + if (bad) "  ▲ worse" else "", 260, if (bad) Jdsp.MRed else color)
         pair(lm, true); pair(lm, false); pair(mh, true); pair(mh, false)
         Cell(listOf(lm, mh).joinToString(" / ") { r -> r?.let { "%+.1f".format(it.levelChangeMaxDb) } ?: "–" } + " dB", 150)
@@ -172,12 +173,12 @@ fun ExportScreen(state: AppState) {
             }
             val o = d.options
             Note("Writes low.wav, mid.wav and high.wav (stereo float32, ${o.sampleRate} Hz, ${o.taps} taps), manifest.json, report.json, README.txt and band-ir-package.zip — the package J_DSP's convolver page imports.", Color.White)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            WrapRow(12.dp, Alignment.CenterVertically) {
                 GlassButton("Choose folder and export…", {
-                    Dialogs.chooseFolder("Export band IR package", state.exportDir)?.let(state::export)
+                    Dialogs.chooseFolder("Export band IR package", state.exportDir) { state.export(it) }
                 }, accent = Jdsp.MGreen, enabled = state.busy == null)
                 state.exportedZip?.let { zip ->
-                    GlassButton("Open folder", { runCatching { Desktop.getDesktop().open(zip.parentFile) } }, accent = Jdsp.LightBlue)
+                    GlassButton(Dialogs.REVEAL_LABEL, { Dialogs.reveal(zip) }, accent = Jdsp.LightBlue)
                     Text(zip.path, color = Jdsp.MGreen, fontSize = 13.sp)
                 }
             }

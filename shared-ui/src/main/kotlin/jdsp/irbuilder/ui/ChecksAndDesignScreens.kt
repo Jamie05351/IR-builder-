@@ -24,7 +24,7 @@ import kotlin.math.roundToInt
 @Composable
 fun ConvolverModeChips(state: AppState) {
     val o = state.options
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    WrapRow(10.dp) {
         jdsp.irbuilder.IrMode.entries.forEach { m ->
             Chip(m.label, o.irMode == m, {
                 state.updateOptions(if (m == jdsp.irbuilder.IrMode.STEREO) o.copy(irMode = m, maxShiftMs = maxOf(o.maxShiftMs, 5.0)) else o.copy(irMode = m))
@@ -47,7 +47,7 @@ fun ChecksScreen(state: AppState) {
             fun set(n: DesignOptions) = state.updateOptions(n)
             val finder = state.tool == jdsp.irbuilder.Tool.CROSSOVER_FINDER || state.tool == jdsp.irbuilder.Tool.EQ_WIZARD
             Note(if (state.tool == jdsp.irbuilder.Tool.EQ_WIZARD) "The EQ Wizard reads the fit range set on its own page." else if (finder) "The Crossover Finder takes J_DSP's crossovers from its own page; the sweeps are checked around them." else "Used by Band Align and Phase IRs. Enter the crossover corners J_DSP had during the sweeps: Band Align scores around them and the Phase IRs correct around them.")
-            Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.Bottom) {
+            WrapRow(20.dp, Alignment.Bottom) {
                 if (!finder) {
                     Labeled("Low/Mid crossover (Hz)") { NumberField(o.lowMidHz, { set(o.copy(lowMidHz = it)) }, accent = Jdsp.LowBand) }
                     Labeled("Mid/High crossover (Hz)") { NumberField(o.midHighHz, { set(o.copy(midHighHz = it)) }, accent = Jdsp.HighBand) }
@@ -60,14 +60,14 @@ fun ChecksScreen(state: AppState) {
                 }
             }
             Text("Smoothing", color = Jdsp.TextDim, fontSize = 12.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            WrapRow(10.dp, Alignment.CenterVertically) {
                 jdsp.irbuilder.MEASUREMENT_SMOOTHING_CHOICES.forEach { n ->
                     Chip(if (n == 0) "None" else "1/$n oct", o.measurementSmoothing == n, { set(o.copy(measurementSmoothing = n)) }, Jdsp.Cyan)
                 }
             }
             Note("Complex (vector) smoothing applied to every file as it's read, so the checks, Band Align, the phase solver and the plots all use the same data. Each file's arrival time is taken out first and put back after, so phase stays exact. 1/24 suits most car measurements; 1/12 for noisy ones. Changing any of these re-reads the files.")
             Text("Impulse window (impulse imports)", color = Jdsp.TextDim, fontSize = 12.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            WrapRow(10.dp, Alignment.CenterVertically) {
                 jdsp.irbuilder.IMPULSE_WINDOW_CHOICES.forEach { n ->
                     Chip(if (n == 0) "Off" else "$n cycles", o.impulseWindowCycles == n, { set(o.copy(impulseWindowCycles = n)) }, Jdsp.Cyan)
                 }
@@ -84,7 +84,7 @@ fun ChecksScreen(state: AppState) {
                 Note("Not run yet for the current inputs.", Jdsp.Orange)
                 return@Panel
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            WrapRow(12.dp) {
                 Badge("${c.errors} errors", if (c.errors > 0) Jdsp.MRed else Jdsp.MGreen)
                 Badge("${c.warnings} warnings", if (c.warnings > 0) Jdsp.MidYellow else Jdsp.MGreen)
                 val ready = when (state.tool) {
@@ -101,7 +101,7 @@ fun ChecksScreen(state: AppState) {
                     Severity.WARNING -> Jdsp.MidYellow
                     Severity.INFO -> Jdsp.LightBlue
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+                WrapRow(10.dp, Alignment.Top) {
                     Box(Modifier.width(76.dp).glassBox(color, borderAlpha = 0.8f), contentAlignment = Alignment.Center) {
                         Text(item.severity.name, color = color, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding4())
                     }
@@ -116,17 +116,19 @@ fun ChecksScreen(state: AppState) {
         if (phases.isNotEmpty()) {
             Panel("Band phase at each crossover", accent = Jdsp.Purple) {
                 Note("arg(upper band / lower band) averaged over ±1/6 octave at the crossover. 0° means the bands already add coherently. A large spread means positions disagree and a single fixed correction is a compromise.")
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    listOf("Seat" to 120, "Channel" to 80, "Crossover" to 100, "Offset" to 90, "Spread" to 90, "Positions" to 80).forEach { (t, w) ->
-                        Text(t, color = Jdsp.TextDim, fontSize = 12.sp, modifier = Modifier.width(w.dp))
+                Table {
+                    TableRow {
+                        listOf("Seat" to 120, "Channel" to 80, "Crossover" to 100, "Offset" to 90, "Spread" to 90, "Positions" to 80).forEach { (t, w) ->
+                            Text(t, color = Jdsp.TextDim, fontSize = 12.sp, modifier = Modifier.width(w.dp))
+                        }
                     }
-                }
-                phases.forEach { p ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Cell(p.seat.label, 120); Cell(p.channel.label, 80); Cell(p.crossover.label, 100)
-                        Cell("%+.0f°".format(p.meanDeg), 90, if (kotlin.math.abs(p.meanDeg) > 60) Jdsp.MidYellow else Color.White)
-                        Cell(if (p.positions > 1) "%.0f°".format(p.spreadDeg) else "–", 90, if (p.spreadDeg > 60) Jdsp.MidYellow else Color.White)
-                        Cell(p.positions.toString(), 80)
+                    phases.forEach { p ->
+                        TableRow {
+                            Cell(p.seat.label, 120); Cell(p.channel.label, 80); Cell(p.crossover.label, 100)
+                            Cell("%+.0f°".format(p.meanDeg), 90, if (kotlin.math.abs(p.meanDeg) > 60) Jdsp.MidYellow else Color.White)
+                            Cell(if (p.positions > 1) "%.0f°".format(p.spreadDeg) else "–", 90, if (p.spreadDeg > 60) Jdsp.MidYellow else Color.White)
+                            Cell(p.positions.toString(), 80)
+                        }
                     }
                 }
             }
@@ -167,14 +169,14 @@ fun DesignScreen(state: AppState) {
         }
         if (stereo) Panel("Stereo range", accent = Jdsp.Cyan) {
             Note("The summed phase is linearised between these frequencies; the correction fades out beyond them. Low frequencies need long shifts: keep Max shift at least 4-5 ms for a 150 Hz crossover.")
-            Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            WrapRow(20.dp) {
                 Labeled("From (Hz)") { NumberField(o.stereoMinHz, { set(o.copy(stereoMinHz = it)) }, accent = Jdsp.Cyan) }
                 Labeled("To (Hz)") { NumberField(o.stereoMaxHz, { set(o.copy(stereoMaxHz = it)) }, accent = Jdsp.Cyan) }
             }
         }
         if (!stereo) Panel("Existing J_DSP crossovers", accent = Jdsp.LowBand) {
             Note("Enter the corners J_DSP used for the sweeps. They place the correction regions and are written into the package; J_DSP asks you to acknowledge a mismatch with its own settings (±1 Hz). This program never changes the crossovers.")
-            Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            WrapRow(20.dp) {
                 Labeled("Low/Mid (Hz)") { NumberField(o.lowMidHz, { set(o.copy(lowMidHz = it)) }, accent = Jdsp.LowBand) }
                 Labeled("Mid/High (Hz)") { NumberField(o.midHighHz, { set(o.copy(midHighHz = it)) }, accent = Jdsp.HighBand) }
             }
@@ -193,7 +195,7 @@ fun DesignScreen(state: AppState) {
             }
         }
         Panel("Filter length and latency", accent = Jdsp.Cyan) {
-            Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.Bottom) {
+            WrapRow(20.dp, Alignment.Bottom) {
                 Labeled("Sample rate") { GlassDropdown(o.sampleRate, listOf(48000, 44100), { "$it Hz" }, { rate ->
                     val taps = if (rate == 44100) minOf(o.taps, 32768) else o.taps
                     set(o.copy(sampleRate = rate, taps = taps, latencyFrames = if (taps != o.taps) taps / 2 else o.latencyFrames))
@@ -205,7 +207,7 @@ fun DesignScreen(state: AppState) {
             Note("Default 16384 taps with an 8192-frame common delay: ≈192 ms in J_DSP at 48 kHz (IR delay + 1024-frame partition). Shorter filters cut latency but limit how much phase can be moved at the Low/Mid crossover.")
         }
         state.optionsError?.let { Note("Settings: $it", Jdsp.MRed) }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        WrapRow(12.dp, Alignment.CenterVertically) {
             GlassButton("Calculate and preview", { state.calculate() }, accent = Jdsp.MGreen, enabled = state.optionsError == null && state.measurements.isNotEmpty() && state.busy == null)
             GlassButton("Reset to defaults", { set(DesignOptions(lowMidHz = o.lowMidHz, midHighHz = o.midHighHz)) }, accent = Jdsp.TextDim)
         }
@@ -214,7 +216,7 @@ fun DesignScreen(state: AppState) {
 
 @Composable
 private fun SliderRow(label: String, value: Double, min: Double, max: Double, readout: String, hint: String, onChange: (Double) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+    WrapRow(14.dp, Alignment.CenterVertically) {
         Box(Modifier.width(140.dp).glassBox(Jdsp.Orange, borderAlpha = 0.6f)) {
             Text(label, color = Color.White, fontSize = 13.sp, modifier = Modifier.padding4())
         }

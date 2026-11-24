@@ -122,7 +122,7 @@ fun LinePlot(
 
 @Composable
 fun Legend(series: List<Series>) {
-    Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+    WrapRow(16.dp, Alignment.CenterVertically) {
         series.distinctBy { it.label }.forEach { s ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Box(Modifier.width(18.dp).height(3.dp).drawBehind {

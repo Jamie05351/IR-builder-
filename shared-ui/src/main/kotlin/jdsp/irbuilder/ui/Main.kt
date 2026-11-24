@@ -15,35 +15,30 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Window
-import androidx.compose.ui.window.application
-import androidx.compose.ui.window.rememberWindowState
 
 @Composable
 private fun StartScreen(state: AppState) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Panel("What do you want to do?", accent = Jdsp.Orange, trailing = {
-            GlassButton("Open project…", { Dialogs.openFiles("Open project", listOf("jirb"), multiple = false)?.firstOrNull()?.let(state::openProject) }, accent = Jdsp.Purple)
+            GlassButton("Open project…", { Dialogs.openFiles("Open project", listOf("jirb"), multiple = false) { it.firstOrNull()?.let(state::openProject) } }, accent = Jdsp.Purple)
         }) {
             Note("Four independent tools, all working from REW sweeps at both seats. For the best result: Crossover Finder (or Band Align if the crossovers stay), enter the changes in J_DSP and re-measure; then Phase IRs if you use them; then the EQ Wizard last, on the finished system.", Color.White)
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            ToolCard(
-                state, Tool.BAND_ALIGN, Jdsp.MGreen, Modifier.weight(1f),
-                "Delay and polarity in J_DSP",
+        val cards = listOf(
+            CardSpec(
+                Tool.BAND_ALIGN, Jdsp.MGreen, "Delay and polarity in J_DSP",
                 listOf(
                     "Finds each side's Low and High delay and polarity against Mid that make the bands add up best at both seats.",
                     "Scored by sum loss (cancellation at the crossover); never makes a seat worse.",
@@ -51,10 +46,9 @@ private fun StartScreen(state: AppState) {
                     "No added latency.",
                 ),
                 "Steps: Measurements → Checks → Band Align",
-            )
-            ToolCard(
-                state, Tool.PHASE_IRS, Jdsp.HighPink, Modifier.weight(1f),
-                "Phase-alignment IRs for J_DSP's convolver",
+            ),
+            CardSpec(
+                Tool.PHASE_IRS, Jdsp.HighPink, "Phase-alignment IRs for J_DSP's convolver",
                 listOf(
                     "Designs Low/Mid/High phase-only FIRs that make the bands sum coherently through both crossovers at both seats.",
                     "Leaves band magnitude alone: tone stays with your PEQ.",
@@ -62,10 +56,9 @@ private fun StartScreen(state: AppState) {
                     "Adds about 192 ms latency by default (adjustable).",
                 ),
                 "Steps: Measurements → Checks → Design → Preview → Export",
-            )
-            ToolCard(
-                state, Tool.CROSSOVER_FINDER, Jdsp.Orange, Modifier.weight(1f),
-                "Which J_DSP crossovers to use",
+            ),
+            CardSpec(
+                Tool.CROSSOVER_FINDER, Jdsp.Orange, "Which J_DSP crossovers to use",
                 listOf(
                     "Searches each crossover's frequency and slope, with each side's delay and polarity, for the bands to add up best at both seats.",
                     "Reuses your band-solo sweeps: J_DSP's current filter is divided out exactly, others tried where the data is reliable.",
@@ -73,72 +66,114 @@ private fun StartScreen(state: AppState) {
                     "Result: crossover, delay and polarity settings to enter in J_DSP. No added latency.",
                 ),
                 "Steps: Measurements → Checks → Crossover Finder",
-            )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            ToolCard(
-                state, Tool.EQ_WIZARD, Jdsp.Cyan, Modifier.weight(1f),
-                "PEQ bands toward a target, for J_DSP's Pre EQ",
+            ),
+            CardSpec(
+                Tool.EQ_WIZARD, Jdsp.Cyan, "PEQ bands toward a target, for J_DSP's Pre EQ",
                 listOf(
-                    "Fits peaking bands so the system's response at both seats follows a house curve (bass lift, treble tilt).",
+                    "Fits peaking bands so the system's response at both seats follows a house curve (built in, or your own).",
                     "Cuts peaks freely; boosts are capped and never fill a narrow dip (cancellation EQ can't fix).",
                     "Per side or one set for both; J_DSP's own biquad maths, its 16-band limit.",
                     "Result: an Equalizer APO file J_DSP's Parametric EQ imports (Append to Pre EQ).",
                 ),
                 "Steps: Measurements → Checks → EQ Wizard",
-            )
-            Box(Modifier.weight(1f))
-            Box(Modifier.weight(1f))
+            ),
+        )
+        if (LocalCompact.current) {
+            cards.forEach { ToolCard(state, it, Modifier.fillMaxWidth()) }
+        } else cards.chunked(3).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                row.forEach { ToolCard(state, it, Modifier.weight(1f)) }
+                repeat(3 - row.size) { Box(Modifier.weight(1f)) }
+            }
         }
         if (state.measurements.isNotEmpty()) Note("${state.measurements.size} imported measurement(s) stay loaded when you switch tools.")
     }
 }
 
-@Composable
-private fun ToolCard(state: AppState, tool: Tool, accent: Color, modifier: Modifier, subtitle: String, points: List<String>, steps: String) {
-    Panel(tool.title, modifier = modifier, accent = accent) {
-        Text(subtitle, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-        points.forEach { Note("• $it", Color.White) }
-        Note(steps)
-        GlassButton("Start ${tool.title}", { state.startTool(tool) }, accent = accent)
-    }
-}
+private class CardSpec(val tool: Tool, val accent: Color, val subtitle: String, val points: List<String>, val steps: String)
 
-fun main() = application {
-    Window(
-        onCloseRequest = ::exitApplication,
-        title = "J_DSP IR Builder — phase-only band alignment",
-        state = rememberWindowState(size = DpSize(1480.dp, 940.dp)),
-    ) {
-        JdspTheme {
-            val scope = rememberCoroutineScope()
-            val state = remember { AppState(scope) }
-            App(state)
-        }
+@Composable
+private fun ToolCard(state: AppState, c: CardSpec, modifier: Modifier) {
+    Panel(c.tool.title, modifier = modifier, accent = c.accent) {
+        Text(c.subtitle, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        c.points.forEach { Note("• $it", Color.White) }
+        Note(c.steps)
+        GlassButton("Start ${c.tool.title}", { state.startTool(c.tool) }, accent = c.accent)
     }
 }
 
 @Composable
 fun App(state: AppState) {
-    Row(Modifier.fillMaxSize().background(Color.Black)) {
-        Sidebar(state)
-        Column(Modifier.weight(1f).fillMaxHeight()) {
-            Box(Modifier.weight(1f).fillMaxWidth()) {
-                val scroll = rememberScrollState()
-                Column(Modifier.verticalScroll(scroll).padding(20.dp)) {
-                    if (state.tool == null) StartScreen(state) else when (state.step) {
-                        Step.MEASUREMENTS -> MeasurementsScreen(state)
-                        Step.CHECKS -> ChecksScreen(state)
-                        Step.BAND_ALIGN -> BandAlignScreen(state)
-                        Step.FINDER -> FinderScreen(state)
-                        Step.EQ -> EqScreen(state)
-                        Step.DESIGN -> DesignScreen(state)
-                        Step.PREVIEW -> PreviewScreen(state)
-                        Step.EXPORT -> ExportScreen(state)
-                    }
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black)) {
+        val compact = maxWidth < COMPACT_WIDTH
+        androidx.compose.runtime.CompositionLocalProvider(LocalCompact provides compact) {
+            if (compact) {
+                Column(Modifier.fillMaxSize()) {
+                    TopBar(state)
+                    Box(Modifier.weight(1f).fillMaxWidth()) { Content(state, 10.dp) }
+                    StatusBar(state)
+                }
+            } else Row(Modifier.fillMaxSize()) {
+                Sidebar(state)
+                Column(Modifier.weight(1f).fillMaxHeight()) {
+                    Box(Modifier.weight(1f).fillMaxWidth()) { Content(state, 20.dp) }
+                    StatusBar(state)
                 }
             }
-            StatusBar(state)
+        }
+    }
+}
+
+@Composable
+private fun Content(state: AppState, padding: androidx.compose.ui.unit.Dp) {
+    val scroll = rememberScrollState()
+    // A new tool or step starts at the top.
+    androidx.compose.runtime.LaunchedEffect(state.tool, state.step) { scroll.scrollTo(0) }
+    Column(Modifier.verticalScroll(scroll).padding(padding)) {
+        if (state.tool == null) StartScreen(state) else when (state.step) {
+            Step.MEASUREMENTS -> MeasurementsScreen(state)
+            Step.CHECKS -> ChecksScreen(state)
+            Step.BAND_ALIGN -> BandAlignScreen(state)
+            Step.FINDER -> FinderScreen(state)
+            Step.EQ -> EqScreen(state)
+            Step.DESIGN -> DesignScreen(state)
+            Step.PREVIEW -> PreviewScreen(state)
+            Step.EXPORT -> ExportScreen(state)
+        }
+    }
+}
+
+/** The phone's header: the title, the tool (tap to change), and the steps as swipeable tabs. */
+@Composable
+private fun TopBar(state: AppState) {
+    Column(
+        Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color(0xFF1B2027), Jdsp.Gunmetal))).padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        val tool = state.tool
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("J_DSP", color = Jdsp.LightBlue, fontSize = 20.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+            Text("  IR BUILDER", color = Jdsp.TextDim, fontSize = 11.sp, letterSpacing = 2.sp, modifier = Modifier.weight(1f))
+            Box(
+                Modifier.glassBox(if (tool == null) Jdsp.Orange else Jdsp.TextDim, borderAlpha = if (tool == null) 1f else 0.5f)
+                    .clickable { state.tool = null }.padding(horizontal = 10.dp, vertical = 6.dp),
+            ) { Text(tool?.let { "${it.title} · change" } ?: "Choose a tool", color = Color.White, fontSize = 12.sp) }
+        }
+        if (tool != null) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            stepsFor(tool).forEachIndexed { i, s ->
+                val selected = state.step == s
+                val (badge, color) = stepStatus(state, s)
+                Row(
+                    Modifier.glassBox(if (selected) Jdsp.LightBlue else Jdsp.TextDim, borderAlpha = if (selected) 1f else 0.3f)
+                        .clickable { state.step = s }.padding(horizontal = 10.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text("${i + 1}", color = if (selected) Jdsp.LightBlue else Jdsp.TextDim, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text(s.title, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    if (badge != null) Text(badge, color = color, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
         }
     }
 }

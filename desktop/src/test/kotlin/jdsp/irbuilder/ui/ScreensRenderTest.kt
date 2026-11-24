@@ -82,8 +82,8 @@ class ScreensRenderTest {
         )))
         state.alignment = jdsp.irbuilder.BandAlign.solve(set, state.align)
         state.design = Designer.design(set)
-        fun render(name: String) {
-            val scene = ImageComposeScene(1480, 2400, Density(1f)) { JdspTheme { App(state) } }
+        fun render(name: String, width: Int = 1480) {
+            val scene = ImageComposeScene(width, 2400, Density(1f)) { JdspTheme { App(state) } }
             scene.render()
             val png = scene.render(100_000_000).encodeToData(EncodedImageFormat.PNG)!!.bytes
             File(outDir, "$name.png").writeBytes(png)
@@ -92,6 +92,7 @@ class ScreensRenderTest {
         }
         state.tool = null
         render("0-start")
+        render("phone-0-start", width = 412)
         // Stereo IR mode of the Phase IRs tool: Design, Preview and Export.
         state.tool = jdsp.irbuilder.Tool.PHASE_IRS
         state.updateOptions(state.options.copy(irMode = jdsp.irbuilder.IrMode.STEREO, maxShiftMs = 5.0))
@@ -113,6 +114,8 @@ class ScreensRenderTest {
             stepsFor(tool).forEachIndexed { i, step ->
                 state.step = step
                 render("${tool.name.lowercase()}-${i + 1}-${step.name.lowercase()}")
+                // A phone in portrait (Galaxy S25 Ultra: ~412 dp wide).
+                render("phone-${tool.name.lowercase()}-${i + 1}-${step.name.lowercase()}", width = 412)
             }
         }
     }

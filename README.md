@@ -138,10 +138,27 @@ use the exported float32 taps.
 
 ## Download
 
-The **Build** workflow produces two artifacts on every push:
+The **Build** workflow produces three artifacts on every push:
 
 - `JDSP-IR-Builder-installer`: Windows `.exe` installer (Start-menu shortcut, bundled Java runtime).
 - `JDSP-IR-Builder-portable`: ZIP; unzip and run `JDSP-IR-Builder.exe`.
+- `JDSP-IR-Builder-android`: the phone app (`JDSP-IR-Builder-1.1.<build>.apk`, Android 8 or newer).
+
+## Phone app
+
+The same tools on Android, laid out for a phone in portrait: a top bar with the steps as tabs,
+controls that wrap, files as cards, wide tables that scroll sideways. It turns landscape or
+tablet-wide into the PC layout.
+
+- **Install**: download the APK artifact, open it on the phone and allow installing from that
+  app when asked. Every build is signed with the same key (`android/sideload.keystore`, a
+  sideload key, not a store key), so a newer APK installs over the old one and keeps its files.
+- **Importing**: Android's file picker (Downloads, Drive, USB…); files are copied into the app,
+  keeping their names for auto-tagging.
+- **Saving and exporting**: written in the app, then Android asks where to keep them; **Share**
+  sends an export straight to another app or device.
+- Projects saved on the phone point at the phone's copies of the files; a project from the PC
+  needs its files re-imported on the phone.
 
 ## Building from source
 
@@ -151,5 +168,10 @@ Requires JDK 21.
     ./gradlew :desktop:run               # run the app
     ./gradlew :desktop:packageExe        # Windows installer (run on Windows)
 
-`core/` holds import, checks, the solver and export (pure Kotlin). `desktop/` holds the Compose UI
-in J_DSP's dark dashboard style.
+`core/` holds import, checks, the solvers and export (pure Kotlin). `shared-ui/` holds the Compose
+screens in J_DSP's dark dashboard style, compiled into both apps: `desktop/` (Windows window and
+file dialogs) and `android/` (activity and Android file handling). The Android module is built
+only where an Android SDK is found (`ANDROID_HOME` or `local.properties`).
+
+    ./gradlew :android:assembleRelease       # phone APK
+    ./gradlew :android:testDebugUnitTest     # launches the app under Robolectric, phone portrait

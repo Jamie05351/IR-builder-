@@ -71,7 +71,7 @@ private fun ArchitecturePanel() {
 private fun DefaultsPanel(state: AppState) {
     val d = state.defaults
     Panel("New files", accent = Jdsp.LightBlue) {
-        Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.Bottom) {
+        WrapRow(14.dp, Alignment.Bottom) {
             Labeled("Seat") { GlassDropdown(d.seat, Seat.entries, { it.label }, { state.defaults = d.copy(seat = it) }) }
             Labeled("Position") { GlassField(d.position, { state.defaults = d.copy(position = it) }) }
             Labeled("Channel") { GlassDropdown(d.channel, Channel.entries, { it.label }, { state.defaults = d.copy(channel = it) }, width = 90.dp) }
@@ -82,14 +82,14 @@ private fun DefaultsPanel(state: AppState) {
             Labeled("Validation only") { GlassSwitch(d.validationOnly, { state.defaults = d.copy(validationOnly = it) }) }
             Labeled("Tag from names") { GlassSwitch(d.autoTag, { state.defaults = d.copy(autoTag = it) }) }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            GlassButton("Add files…", { Dialogs.openFiles("Add measurement files", listOf("txt", "csv", "frd", "wav"))?.let(state::addFiles) })
+        WrapRow(10.dp, Alignment.CenterVertically) {
+            GlassButton("Add files…", { Dialogs.openFiles("Add measurement files", listOf("txt", "csv", "frd", "wav")) { state.addFiles(it) } })
             GlassButton("Apply tags to selected", { state.applyDefaultsToSelected(true, true, true, true, true, true) }, enabled = state.selected.isNotEmpty())
             GlassButton("Remove selected", state::removeSelected, accent = Jdsp.MRed, enabled = state.selected.isNotEmpty())
             GlassButton("Clear all", state::clearAll, accent = Jdsp.MRed, enabled = state.measurements.isNotEmpty())
             Spacer(Modifier.width(24.dp))
-            GlassButton("Open project…", { Dialogs.openFiles("Open project", listOf("jirb"), multiple = false)?.firstOrNull()?.let(state::openProject) }, accent = Jdsp.Purple)
-            GlassButton("Save project…", { Dialogs.saveFile("Save project", state.projectFile?.name ?: "tune.jirb")?.let(state::saveProject) }, accent = Jdsp.Purple)
+            GlassButton("Open project…", { Dialogs.openFiles("Open project", listOf("jirb"), multiple = false) { it.firstOrNull()?.let(state::openProject) } }, accent = Jdsp.Purple)
+            GlassButton("Save project…", { Dialogs.saveFile("Save project", state.projectFile?.name ?: "tune.jirb") { state.saveProject(it) } }, accent = Jdsp.Purple)
         }
         Note("Calibration 0 dB is right for REW SPL exports. Impulse WAVs need the offset that maps them to measured SPL; all bands at one position must share it.")
     }
@@ -100,6 +100,11 @@ private fun FilesPanel(state: AppState) {
     Panel("Measurements (${state.measurements.size})", accent = Jdsp.LightBlue) {
         if (state.measurements.isEmpty()) {
             Note("No files yet. Add REW exports: impulse response as text (best), measurement as text (.txt/.csv/.frd), or mono impulse WAVs.")
+            return@Panel
+        }
+        if (LocalCompact.current) {
+            Note("Tap a file's name to select it.")
+            state.measurements.forEachIndexed { i, m -> MeasurementCard(state, i, m) }
             return@Panel
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -154,7 +159,8 @@ private fun CompletenessPanel(state: AppState) {
             else "Phase IRs correct each crossover where both of its bands were measured (Low+Mid for Low/Mid, Mid+High for Mid/High), per channel. Anything without data is left as a pure delay. Combined is optional (validates the band sum). Each band needs to cover an octave either side of the crossovers it's used for.",
         )
         val rows = grid.keys.map { it.seat to it.position }.distinct().sortedWith(compareBy({ it.first }, { it.second }))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Table {
+        TableRow(6.dp) {
             Text("", modifier = Modifier.width(200.dp))
             for (ch in Channel.entries) for (b in Band.entries) {
                 Text("${ch.name} ${b.label}", color = bandColor(b), fontSize = 11.sp, modifier = Modifier.width(74.dp))
@@ -162,7 +168,7 @@ private fun CompletenessPanel(state: AppState) {
         }
         rows.forEach { (seat, pos) ->
             val validation = state.measurements.any { it.seat == seat && it.position.trim() == pos && it.validationOnly }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            TableRow(6.dp) {
                 Text("${seat.label} · $pos" + if (validation) "  (validation)" else "", color = Color.White, fontSize = 13.sp, modifier = Modifier.width(200.dp))
                 for (ch in Channel.entries) for (b in Band.entries) {
                     val have = grid[jdsp.irbuilder.GroupKey(seat, pos, ch)]?.contains(b) == true
@@ -178,5 +184,31 @@ private fun CompletenessPanel(state: AppState) {
                 }
             }
         }
+        }
     }
 }
+
+/** A file on a phone: its name (tap to select), then its tags wrapping beneath. */
+@Composable
+private fun MeasurementCard(state: AppState, i: Int, m: Measurement) {
+    val selected = i in state.selected
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp))
+            .glassBox(if (selected) Jdsp.LightBlue else Jdsp.TextDim, borderAlpha = if (selected) 0.9f else 0.25f)
+            .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text((if (selected) "✓ " else "") + File(m.path).name, color = if (selected) Jdsp.LightBlue else Color.White, fontSize = 13.sp,
+            modifier = Modifier.fillMaxWidth().clickable { state.toggleSelect(i) })
+        WrapRow(8.dp, Alignment.Bottom) {
+            Labeled("Seat") { GlassDropdown(m.seat, Seat.entries, { it.label }, { state.update(i, m.copy(seat = it)) }) }
+            Labeled("Position") { GlassField(m.position, { state.update(i, m.copy(position = it)) }) }
+            Labeled("Ch") { GlassDropdown(m.channel, Channel.entries, { it.name }, { state.update(i, m.copy(channel = it)) }, width = 70.dp) }
+            Labeled("Band") { GlassDropdown(m.band, Band.entries, { it.label }, { state.update(i, m.copy(band = it)) }, width = 110.dp, accent = bandColor(m.band)) }
+            Labeled("Timing ref") { GlassField(m.timingReference, { state.update(i, m.copy(timingReference = it)) }, width = 120.dp) }
+            Labeled("Cal dB") { NumberField(m.calibrationDb, { state.update(i, m.copy(calibrationDb = it)) }, width = 70.dp) }
+            Labeled("Valid.") { GlassSwitch(m.validationOnly, { state.update(i, m.copy(validationOnly = it)) }, accent = Jdsp.Purple) }
+        }
+    }
+}
+
