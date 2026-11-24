@@ -8,39 +8,51 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
 import jdsp.irbuilder.ui.App
 import jdsp.irbuilder.ui.AppState
 import jdsp.irbuilder.ui.Dialogs
 import jdsp.irbuilder.ui.JdspTheme
 
-class MainActivity : ComponentActivity() {
-    private var onOpened: ((List<Uri>) -> Unit)? = null
-    private var onCreated: ((Uri?) -> Unit)? = null
+/** Holds the app's state outside the activity, so it outlives the activity being recreated. */
+class StateHolder : ViewModel() {
+    val state = AppState(viewModelScope)
+}
 
-    private val openOne = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> onOpened?.invoke(listOfNotNull(uri)); onOpened = null }
-    private val openMany = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> onOpened?.invoke(uris); onOpened = null }
-    private val create = registerForActivityResult(CreateTyped()) { uri -> onCreated?.invoke(uri); onCreated = null }
+class MainActivity : ComponentActivity() {
+    // Results go to Dialogs, which outlives this activity: a picker opened by an activity that
+    // Android has since recreated still delivers to whoever asked.
+    private val openOne = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> Dialogs.opened(this, listOfNotNull(uri)) }
+    private val openMany = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> Dialogs.opened(this, uris) }
+    private val create = registerForActivityResult(CreateTyped()) { uri -> Dialogs.created(this, uri) }
+
+    lateinit var state: AppState
+        private set
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Dialogs.attach(this)
+        state = ViewModelProvider(this)[StateHolder::class.java].state
+        Dialogs.attach(this, savedInstanceState)
         setContent {
             JdspTheme {
-                val scope = rememberCoroutineScope()
-                val state = remember { AppState(scope) }
                 Box(Modifier.fillMaxSize().background(Color.Black).windowInsetsPadding(WindowInsets.safeDrawing)) { App(state) }
             }
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        Dialogs.save(outState)
     }
 
     override fun onDestroy() {
@@ -49,16 +61,12 @@ class MainActivity : ComponentActivity() {
     }
 
     /** Asks for one or more documents of any type (the importer says what it can't read). */
-    fun pick(multiple: Boolean, onPicked: (List<Uri>) -> Unit) {
-        onOpened = onPicked
+    fun pick(multiple: Boolean) {
         if (multiple) openMany.launch(arrayOf("*/*")) else openOne.launch(arrayOf("*/*"))
     }
 
     /** Asks where to save a new document named [name] of [mimeType]. */
-    fun createDocument(name: String, mimeType: String, onUri: (Uri?) -> Unit) {
-        onCreated = onUri
-        create.launch(name to mimeType)
-    }
+    fun createDocument(name: String, mimeType: String) = create.launch(name to mimeType)
 
     /** CreateDocument with the MIME type chosen per call (the stock one fixes it at registration). */
     private class CreateTyped : ActivityResultContract<Pair<String, String>, Uri?>() {

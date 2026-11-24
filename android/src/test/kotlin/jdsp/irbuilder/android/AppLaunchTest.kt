@@ -46,4 +46,71 @@ class AppLaunchTest {
         compose.runOnUiThread { Dialogs.chooseFolder("Export", null) { dir = it } }
         assertTrue(dir!!.isDirectory && dir!!.path.startsWith(compose.activity.cacheDir.path))
     }
+
+    private fun uriFor(f: File) = android.net.Uri.fromFile(f)
+
+    /** Runs the main thread's queue until [done]: background copies hand their results back there. */
+    private fun await(done: () -> Boolean) {
+        repeat(100) {
+            if (done()) return
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+            Thread.sleep(50)
+        }
+        throw AssertionError("timed out")
+    }
+
+    @Test
+    fun picksWithTheSameNameDontOverwriteEachOther() {
+        val a = compose.activity
+        val one = File(a.filesDir, "src/one/driver_L_low.txt").apply { parentFile!!.mkdirs(); writeText("first") }
+        val two = File(a.filesDir, "src/two/driver_L_low.txt").apply { parentFile!!.mkdirs(); writeText("second") }
+        var got: List<File>? = null
+        compose.runOnUiThread {
+            Dialogs.reset()
+            Dialogs.openFiles("Add", listOf("txt")) { got = it }
+            Dialogs.opened(a, listOf(uriFor(one), uriFor(two)))
+        }
+        await { got != null }
+        val files = got!!
+        assertEquals(listOf("driver_L_low.txt", "driver_L_low.txt"), files.map { it.name })
+        assertEquals(2, files.map { it.path }.toSet().size)
+        assertEquals(listOf("first", "second"), files.map { it.readText() })
+    }
+
+    @Test
+    fun aPickDeliveredAfterTheAppWasRestartedStillLands() {
+        val a = compose.activity
+        val f = File(a.filesDir, "src/restart/driver_c_L_combined.txt").apply { parentFile!!.mkdirs(); writeText("x") }
+        val saved = android.os.Bundle()
+        compose.runOnUiThread {
+            Dialogs.reset()
+            Dialogs.openFiles("Add", listOf("txt")) { error("the old screen is gone") }
+            Dialogs.save(saved)
+            // The process died: nothing pending in memory, the activity comes back with its saved state.
+            Dialogs.reset()
+            Dialogs.attach(a, saved)
+            Dialogs.opened(a, listOf(uriFor(f)))
+        }
+        await { a.state.measurements.isNotEmpty() }
+        assertEquals("driver_c_L_combined.txt", File(a.state.measurements.single().path).name)
+    }
+
+    @Test
+    fun aSaveDeliveredAfterTheAppWasRestartedWritesTheFile() {
+        val a = compose.activity
+        val written = File(a.cacheDir, "out/x/tune.jirb").apply { parentFile!!.mkdirs(); writeText("{project}") }
+        val target = File(a.filesDir, "chosen/tune.jirb").apply { parentFile!!.mkdirs(); writeText("") }
+        val saved = android.os.Bundle()
+        compose.runOnUiThread {
+            Dialogs.reset()
+            Dialogs.written(written)
+            Dialogs.save(saved)
+            Dialogs.reset()
+            Dialogs.attach(a, saved)
+            Dialogs.created(a, uriFor(target))
+        }
+        await { target.readText().isNotEmpty() }
+        assertEquals("{project}", target.readText())
+    }
 }
+
