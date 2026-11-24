@@ -123,7 +123,8 @@ class AppState(private var scope: CoroutineScope) {
     fun effectiveOptions(): DesignOptions = when (tool) {
         Tool.CROSSOVER_FINDER -> options.copy(lowMidHz = finder.current.lowMidHz, midHighHz = finder.current.midHighHz)
         // The EQ reads the whole fit range: the Stereo range is what sets how far files are read.
-        Tool.EQ_WIZARD -> options.copy(irMode = jdsp.irbuilder.IrMode.STEREO, stereoMinHz = eq.minHz, stereoMaxHz = eq.maxHz)
+        // The EQ uses magnitude only, so files without phase are fine.
+        Tool.EQ_WIZARD -> options.copy(irMode = jdsp.irbuilder.IrMode.STEREO, stereoMinHz = eq.minHz, stereoMaxHz = eq.maxHz, magnitudeOnly = true)
         else -> options
     }
 
@@ -156,7 +157,7 @@ class AppState(private var scope: CoroutineScope) {
             Tool.BAND_ALIGN -> "Band Align: import Low/Mid/High band-solo sweeps for both seats, then enter J_DSP's delays."
             Tool.PHASE_IRS -> "Phase IRs: import software-band-solo sweeps for both seats and both channels."
             Tool.CROSSOVER_FINDER -> "Crossover Finder: import Low/Mid/High band-solo sweeps for both seats, then enter J_DSP's crossovers and delays."
-            Tool.EQ_WIZARD -> "EQ Wizard: import Combined sweeps (all bands playing) for both seats and both sides."
+            Tool.EQ_WIZARD -> "EQ Wizard: import Combined sweeps (all bands playing) for both seats and both sides. Magnitude is all it uses: exports without phase are fine."
         }
         // The crossover corners the checks use depend on the tool.
         checks = null

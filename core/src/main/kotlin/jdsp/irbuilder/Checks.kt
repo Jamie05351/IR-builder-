@@ -169,7 +169,8 @@ object Checks {
 
         // Timing references: each channel's sweeps must share one unchanged reference, or the
         // band-to-band phase the designer aligns is meaningless.
-        for (ch in Channel.entries) {
+        // (Magnitude only, as for the EQ Wizard: no phase is compared, so no reference is needed.)
+        if (!o.magnitudeOnly) for (ch in Channel.entries) {
             val refs = set.measurements.filter { it.channel == ch }.map { it.timingReference.trim() }.toSet()
             if (refs.size > 1) err("${ch.label}: more than one timing reference", "Found ${refs.joinToString()}. Every ${ch.label.lowercase()} sweep must use the same unchanged timing reference.")
             if (refs.any { it.isEmpty() }) err("${ch.label}: missing timing reference", "Enter the timing-reference ID used for each sweep.")
@@ -218,7 +219,8 @@ object Checks {
             val kinds = g.responses.values.map { it.kind }.toSet()
             if (kinds.size > 1) warn("${g.key.label}: mixed file types", "REW text and impulse WAVs at the same position must share one calibration and time origin.")
             for ((band, r) in g.responses) {
-                if (r.heavilySmoothed) warn("${g.key.label} ${band.label}: smoothed too coarsely (${r.smoothing})", "Phase smoothed coarser than 1/12 octave can't be summed reliably. Re-export from REW with 1/48 octave or no smoothing.")
+                // Coarse smoothing only matters where phase gets summed.
+                if (r.heavilySmoothed && r.hasPhase && !(o.magnitudeOnly && band == Band.COMBINED)) warn("${g.key.label} ${band.label}: smoothed too coarsely (${r.smoothing})", "Phase smoothed coarser than 1/12 octave can't be summed reliably. Re-export from REW with 1/48 octave or no smoothing.")
                 val p = r.impulsePeakIndex
                 if (p != null && p < 2 && r.kind == SourceKind.IMPULSE_WAV) warn("${g.key.label} ${band.label}: impulse peak at sample $p", "The WAV may have been trimmed to its own peak, losing the shared time origin. Export impulses with the timing-reference offset preserved.")
             }
@@ -236,7 +238,8 @@ object Checks {
                 if (abs(a - b) > 15) warn("${g.key.label}: ${xo.label} levels far apart", "${xo.lower.label} %.1f dB vs ${xo.upper.label} %.1f dB at %.0f Hz. Check the crossover frequency you entered, band tags, gains or mutes.".format(a, b, hz))
             }
             // A Combined sweep plays every band, so it can only be checked against all three.
-            if (g.isComplete) g.responses[Band.COMBINED]?.let { combined ->
+            // (Only with phase: without it the two can't be compared.)
+            if (g.isComplete && g.responses.values.all { it.hasPhase }) g.responses[Band.COMBINED]?.let { combined ->
                 val sum = g.branchSum()
                 val c = combined.response
                 var num = 0.0
@@ -269,6 +272,15 @@ object Checks {
             }
         }
 
+        val phaseless = set.groups.flatMap { g -> g.responses.filterValues { !it.hasPhase }.keys.map { g to it } }
+        if (phaseless.isNotEmpty()) {
+            info("${phaseless.size} file(s) read as magnitude only", "No phase column, or no REW delay note. That's fine for the EQ, which uses magnitude only.")
+            for ((g, _) in phaseless.distinctBy { it.first.key }) {
+                if (Band.COMBINED !in g.responses && g.responses.keys.any { it in Band.BRANCHES }) {
+                    warn("${g.key.label}: band solos without phase", "Bands can only be summed with their phase, so this position isn't used. Import its Combined sweep (all bands playing), or re-export the solos with phase.")
+                }
+            }
+        }
         if (combinedOk.isNotEmpty()) info("Combined sweeps match the band sum", "${combinedOk.size} position/channel(s); worst relative complex error %.2f.".format(combinedOk.max()))
 
         // Positions far from their seat's typical level suggest a gain change or a moved mic.
@@ -287,7 +299,7 @@ object Checks {
         val phases = ArrayList<CrossoverPhase>()
         for (ch in Channel.entries) for (xo in scope.crossovers) {
             val bySeat = Seat.entries.mapNotNull { seat ->
-                val gs = set.groups.filter { it.key.seat == seat && it.key.channel == ch && it.has(listOf(xo.lower, xo.upper)) && !it.validationOnly }
+                val gs = set.groups.filter { it.key.seat == seat && it.key.channel == ch && it.has(listOf(xo.lower, xo.upper)) && !it.validationOnly && it.responses.values.all { r -> r.hasPhase } }
                 if (gs.isEmpty()) return@mapNotNull null
                 val angles = gs.map { relativePhase(it.branch(xo.lower), it.branch(xo.upper), freqs, xo.hz(o)) }
                 val (mean, spread) = circularStats(angles)

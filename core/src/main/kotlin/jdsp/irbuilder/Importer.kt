@@ -28,6 +28,11 @@ class LoadedResponse(
     val smoothing: String? = null,
     /** The delay REW took out of the phase and this reader put back, ms (REW text only). */
     val restoredDelayMs: Double = 0.0,
+    /**
+     * False for a magnitude-only read (no phase column, or no way to know the delay REW took out
+     * of it): the response then has zero phase, which can't be summed with other bands.
+     */
+    val hasPhase: Boolean = true,
 ) {
     /**
      * Smoothed too coarsely to sum phase: coarser than 1/12 octave, or one of REW's variable
@@ -59,7 +64,9 @@ object Importer {
         required: ClosedFloatingPointRange<Double>? = null,
         /** Impulses only: frequency-dependent window length in cycles (0 = the whole impulse). */
         windowCycles: Int = 0,
-    ): LoadedResponse = silenceOutsideSweep(readSmoothed(m, freqs, sampleRate, smoothing, required, windowCycles, freqs), freqs)
+        /** Accept magnitude-only REW text (see [DesignOptions.magnitudeOnly]). */
+        magnitudeOnly: Boolean = false,
+    ): LoadedResponse = silenceOutsideSweep(readSmoothed(m, freqs, sampleRate, smoothing, required, windowCycles, freqs, magnitudeOnly), freqs)
 
     /** A band-limited sweep says nothing beyond its ends: the band is taken as silent there. */
     private fun silenceOutsideSweep(r: LoadedResponse, freqs: DoubleArray): LoadedResponse {
@@ -69,18 +76,18 @@ object Importer {
             h.re[i] = 0.0
             h.im[i] = 0.0
         }
-        return LoadedResponse(h, r.kind, r.impulsePeakIndex, r.coverageHz, r.smoothing, r.restoredDelayMs)
+        return LoadedResponse(h, r.kind, r.impulsePeakIndex, r.coverageHz, r.smoothing, r.restoredDelayMs, r.hasPhase)
     }
 
-    private fun readSmoothed(m: Measurement, freqs: DoubleArray, sampleRate: Int, smoothing: Int, required: ClosedFloatingPointRange<Double>?, windowCycles: Int, grid: DoubleArray): LoadedResponse {
+    private fun readSmoothed(m: Measurement, freqs: DoubleArray, sampleRate: Int, smoothing: Int, required: ClosedFloatingPointRange<Double>?, windowCycles: Int, grid: DoubleArray, magnitudeOnly: Boolean): LoadedResponse {
         // Silence outside the sweep first: the reader holds a band-limited sweep's end values
         // across the rest of the grid, and that flat-phase filler would otherwise outvote the real
         // data in the arrival estimate the smoothing depends on.
-        val r = silenceOutsideSweep(readRaw(m, freqs, sampleRate, required ?: freqs.first()..freqs.last(), windowCycles), grid)
+        val r = silenceOutsideSweep(readRaw(m, freqs, sampleRate, required ?: freqs.first()..freqs.last(), windowCycles, magnitudeOnly), grid)
         if (smoothing <= 0) return r
         // Start from the delay the file itself states: REW's header note (restored = exported
         // delayed by it) or an impulse's peak. Only the small remainder is estimated.
-        return LoadedResponse(complexSmooth(r.response, freqs, smoothing, delayHintSeconds(r, sampleRate)), r.kind, r.impulsePeakIndex, r.coverageHz, r.smoothing, r.restoredDelayMs)
+        return LoadedResponse(complexSmooth(r.response, freqs, smoothing, delayHintSeconds(r, sampleRate)), r.kind, r.impulsePeakIndex, r.coverageHz, r.smoothing, r.restoredDelayMs, r.hasPhase)
     }
 
     /**
@@ -160,9 +167,9 @@ object Importer {
     private const val DIRECT_SOUND_HZ = 300.0
     private const val COARSE_RANGE_S = 0.02
 
-    private fun readRaw(m: Measurement, freqs: DoubleArray, sampleRate: Int, required: ClosedFloatingPointRange<Double>, windowCycles: Int): LoadedResponse {
+    private fun readRaw(m: Measurement, freqs: DoubleArray, sampleRate: Int, required: ClosedFloatingPointRange<Double>, windowCycles: Int, magnitudeOnly: Boolean): LoadedResponse {
         require(m.position.isNotBlank()) { "Position is empty" }
-        require(m.timingReference.isNotBlank()) { "Timing-reference ID is empty" }
+        require(magnitudeOnly || m.timingReference.isNotBlank()) { "Timing-reference ID is empty" }
         require(m.calibrationDb.isFinite() && abs(m.calibrationDb) <= 300) { "Calibration offset must be finite and within ±300 dB" }
         val file = File(m.path)
         require(file.isFile) { "File not found: ${m.path}" }
@@ -172,7 +179,7 @@ object Importer {
             "txt", "csv", "frd" -> {
                 val text = decode(file.readBytes())
                 if (text.lineSequence().take(5).any { rewImpulseBanner.containsMatchIn(it) }) readRewImpulseText(file, text, m, freqs, sampleRate, windowCycles)
-                else readRewText(file, m, freqs, required)
+                else readRewText(file, m, freqs, required, magnitudeOnly)
             }
             "mdat" -> throw IllegalArgumentException("${file.name}: export the measurement from REW as text (File › Export › Measurement as text); .mdat is not read directly")
             else -> throw IllegalArgumentException("${file.name}: use REW frequency/SPL/phase text (.txt/.csv/.frd) or a mono impulse .wav")
@@ -221,7 +228,7 @@ object Importer {
         return text.removePrefix("\uFEFF")
     }
 
-    private fun readRewText(file: File, m: Measurement, freqs: DoubleArray, required: ClosedFloatingPointRange<Double>): LoadedResponse {
+    private fun readRewText(file: File, m: Measurement, freqs: DoubleArray, required: ClosedFloatingPointRange<Double>, magnitudeOnly: Boolean): LoadedResponse {
         val f = ArrayList<Double>()
         val spl = ArrayList<Double>()
         val deg = ArrayList<Double>()
@@ -249,7 +256,14 @@ object Importer {
                 if (line.trim().replace(',', '.').toDoubleOrNull() != null) singleNumbers++
                 // Two numbers and nothing else: an export without the phase column.
                 val two = line.trim().split(spaceOrSemicolon).filter { it.isNotEmpty() }
-                if (two.size == 2 && two.all { it.replace(',', '.').toDoubleOrNull() != null }) phaseMissing = true
+                if (two.size == 2 && two.all { it.replace(',', '.').toDoubleOrNull() != null }) {
+                    phaseMissing = true
+                    // Magnitude only: frequency and SPL are all that's needed.
+                    if (magnitudeOnly) {
+                        val (freq, db) = two.map { it.replace(',', '.').toDouble() }
+                        if (freq.isFinite() && db.isFinite() && freq > 0.0 && (f.isEmpty() || freq > f.last())) { f += freq; spl += db; deg += 0.0 }
+                    }
+                }
                 continue
             }
             val (freq, db, ph) = Triple(row[0], row[1], row[2])
@@ -261,15 +275,18 @@ object Importer {
         require(!(f.isEmpty() && singleNumbers >= 16)) {
             "${file.name}: looks like an impulse response exported as text (one value per line). Use File › Export › Measurement as text (frequency, SPL, phase), or export the impulse response as a WAV."
         }
-        require(!(phaseMissing && f.isEmpty())) { "${file.name}: a phase column is required; the band sum depends on relative phase" }
+        require(magnitudeOnly || !(phaseMissing && f.isEmpty())) { "${file.name}: a phase column is required; the band sum depends on relative phase" }
         require(f.size >= 16) { "${file.name}: no frequency / SPL / phase rows. Export from REW with File › Export › Measurement as text" }
+        // Without a phase column, or without knowing the delay REW took out of it, the phase is
+        // unusable: a magnitude-only read keeps the magnitude and drops the phase.
+        val hasPhase = !phaseMissing && (sawDelay || fromRew)
         // REW takes the measurement's delay out of the phase and records it only in the header.
-        require(sawHeader) {
+        require(magnitudeOnly || sawHeader) {
             "${file.name}: has no REW header, which holds the delay REW took out of the phase. Re-export with \"Do not include any comments or headers\" unticked."
         }
         // REW writes the note only when it took a delay out, so its own header without one means
         // 0 ms. Any other header without one can't say what was taken out: refused, not guessed.
-        require(sawDelay || fromRew) {
+        require(magnitudeOnly || sawDelay || fromRew) {
             "${file.name}: its header has no \"Delay ... ms\" note, so the delay REW took out of the phase is unknown. Export it from REW with File › Export › Measurement as text."
         }
         require(f.first() <= required.start * 1.0001 && f.last() >= required.endInclusive * 0.9999) {
@@ -284,7 +301,7 @@ object Importer {
         val unwrapped = if (deg.all { abs(it) <= 180.000001 }) unwrap(rad) else rad
         // Put back the delay REW removed (J_DSP's convention: phase − 2π·f·delay).
         val delay = delayMs / 1000.0
-        val phase = DoubleArray(fa.size) { unwrapped[it] - 2 * PI * fa[it] * delay }
+        val phase = DoubleArray(fa.size) { if (hasPhase) unwrapped[it] - 2 * PI * fa[it] * delay else 0.0 }
         val logF = DoubleArray(fa.size) { ln(fa[it]) }
         val logGrid = DoubleArray(freqs.size) { ln(freqs[it]) }
         val mag = interp(logGrid, logF, spl.toDoubleArray())
@@ -297,7 +314,7 @@ object Importer {
             out.re[i] = a * cos(ph[i])
             out.im[i] = a * sin(ph[i])
         }
-        return LoadedResponse(out, SourceKind.REW_TEXT, null, fa.first()..fa.last(), smoothing, delayMs)
+        return LoadedResponse(out, SourceKind.REW_TEXT, null, fa.first()..fa.last(), smoothing, if (hasPhase) delayMs else 0.0, hasPhase)
     }
 
     private fun readImpulse(file: File, m: Measurement, freqs: DoubleArray, sampleRate: Int, windowCycles: Int): LoadedResponse {

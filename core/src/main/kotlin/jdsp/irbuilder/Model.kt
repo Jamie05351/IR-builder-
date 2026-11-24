@@ -96,6 +96,12 @@ data class DesignOptions(
     val regularization: Double = 0.05,
     val driverWeight: Double = 1.0,
     val passengerWeight: Double = 1.0,
+    /**
+     * The EQ Wizard reads magnitude only: REW exports without a phase column, or without the
+     * header note saying what delay REW took out of the phase, are accepted, and no timing
+     * reference is needed. Set by the tool, never saved in a project.
+     */
+    @kotlinx.serialization.Transient val magnitudeOnly: Boolean = false,
 ) {
     val latencyMs: Double get() = latencyFrames * 1000.0 / sampleRate
 

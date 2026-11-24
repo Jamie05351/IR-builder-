@@ -170,6 +170,11 @@ object EqWizard {
         val warnings = ArrayList<String>()
         fun response(g: LoadedGroup): CVec? = when {
             Band.COMBINED in g.responses -> g.responses.getValue(Band.COMBINED).response
+            // Bands only add up with their phase; without it the sum would be guesswork.
+            g.responses.any { (b, r) -> b in Band.BRANCHES && !r.hasPhase } -> {
+                warnings += "${g.key.label}: its band solos have no phase, so they can't be summed; import its Combined sweep instead"
+                null
+            }
             g.has(Band.BRANCHES) -> g.branchSum()
             g.responses.keys.any { it in Band.BRANCHES } -> { warnings += "${g.key.label}: not every band was swept, so its sum is partial"; g.branchSum() }
             else -> null
@@ -181,7 +186,7 @@ object EqWizard {
             if (rs.isEmpty()) continue
             perSeat[ch to seat] = DoubleArray(n) { i -> rs.sumOf { r -> r.re[i] * r.re[i] + r.im[i] * r.im[i] } / rs.size }
         }
-        require(perSeat.isNotEmpty()) { "No Combined or band-solo sweeps to equalise" }
+        require(perSeat.isNotEmpty()) { (listOf("No Combined or band-solo sweeps to equalise") + warnings).joinToString(". ") }
         fun seatAverage(keys: List<Pair<Channel, Seat>>): DoubleArray {
             val ks = keys.filter { it in perSeat }
             val w = ks.map { set.options.seatWeight(it.second) }
