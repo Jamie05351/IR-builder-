@@ -81,5 +81,20 @@ class AppStateTest {
         other.addFiles(files.take(1))
         kotlin.test.assertEquals(jdsp.irbuilder.Band.LOW, other.measurements.single().band)
     }
-}
 
+    @Test
+    fun movingAFileToTheOtherSideMovesItsTimingReference() {
+        val state = AppState(kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined))
+        val dir = createTempDirectory("irb-ref").toFile()
+        // No side in the name: it lands on the default side (Left) with Left's reference.
+        state.addFiles(listOf(File(dir, "driver_mid.txt").apply { writeText("") }, File(dir, "R_driver_low.txt").apply { writeText("") }))
+        val i = state.measurements.indexOfFirst { it.path.endsWith("driver_mid.txt") }
+        kotlin.test.assertEquals("R speaker", state.measurements[i].timingReference)
+        state.update(i, state.measurements[i].copy(channel = jdsp.irbuilder.Channel.R))
+        kotlin.test.assertEquals("L speaker", state.measurements[i].timingReference)
+        // A reference the user typed stays as typed.
+        state.update(i, state.measurements[i].copy(timingReference = "loopback"))
+        state.update(i, state.measurements[i].copy(channel = jdsp.irbuilder.Channel.L))
+        kotlin.test.assertEquals("loopback", state.measurements[i].timingReference)
+    }
+}
