@@ -204,5 +204,90 @@ class EqWizardTest {
         // Band solos too: a High band asked to reach past 20 kHz (Mid/High at 7 kHz) is capped.
         assertTrue(requiredCoverageHz(Band.HIGH, DesignOptions(midHighHz = 7000.0)).endInclusive <= SWEEP_MAX_HZ)
     }
-}
 
+    @Test
+    fun magnitudeOnlyExportsAreEnoughForTheEq() {
+        // Frequency and SPL only, no REW header, no timing reference: what a plain magnitude
+        // export looks like. The EQ reads it; the phase tools still refuse it.
+        val dir = createTempDirectory("eq").toFile()
+        val hump = EqBand(200.0, 6.0, 1.0)
+        val ms = ArrayList<Measurement>()
+        for (seat in Seat.entries) for (ch in Channel.entries) {
+            val file = File(dir, "${seat.name}_${ch.name}.txt")
+            file.writeText(buildString {
+                var hz = 20.0
+                while (hz <= 20000.0) { append("%.4f %.4f\n".format(java.util.Locale.ROOT, hz, 80 + EqWizard.peakDb(hump, hz, fs))); hz *= 1.01 }
+                append("20000 80\n")
+            })
+            ms += Measurement(file.path, seat, "c", ch, Band.COMBINED, "")
+        }
+        val o = EqOptions(minHz = 20.0, maxHz = 20000.0, bassLiftDb = 0.0, trebleTiltDb = 0.0)
+        val d = DesignOptions(irMode = IrMode.STEREO, stereoMinHz = o.minHz, stereoMaxHz = o.maxHz, magnitudeOnly = true)
+        val set = MeasurementSet.load(ms, d, emptySet())
+        assertTrue(set.loadErrors.isEmpty(), set.loadErrors.joinToString { it.message })
+        assertTrue(set.groups.all { g -> g.responses.values.none { it.hasPhase } })
+        val checks = Checks.run(set, CheckScope.eqWizard(ms))
+        assertTrue(checks.items.none { it.severity == Severity.ERROR }, checks.items.joinToString { it.title })
+        val r = EqWizard.solve(set, o)
+        val side = r.sides.first()
+        assertTrue(side.bands.any { abs(it.hz - 200) < 60 && it.gainDb < -3 }, "${side.bands}")
+
+        // The phase tools still need phase.
+        val phased = MeasurementSet.load(ms.map { it.copy(timingReference = "ref") }, DesignOptions(irMode = IrMode.STEREO), emptySet())
+        assertEquals(ms.size, phased.loadErrors.size)
+    }
+
+    @Test
+    fun bandSolosWithoutPhaseAreNotSummed() {
+        val dir = createTempDirectory("eq").toFile()
+        val ms = ArrayList<Measurement>()
+        for (b in Band.BRANCHES) {
+            val file = File(dir, "L_${b.name}.txt")
+            file.writeText(buildString { var hz = 20.0; while (hz <= 20000.0) { append("%.4f 80\n".format(java.util.Locale.ROOT, hz)); hz *= 1.02 }; append("20000 80\n") })
+            ms += Measurement(file.path, Seat.DRIVER, "c", Channel.L, b, "")
+        }
+        val d = DesignOptions(irMode = IrMode.STEREO, stereoMinHz = 20.0, stereoMaxHz = 20000.0, magnitudeOnly = true)
+        val set = MeasurementSet.load(ms, d, emptySet())
+        val checks = Checks.run(set, CheckScope.eqWizard(ms))
+        assertTrue(checks.items.any { "without phase" in it.title }, checks.items.joinToString { it.title })
+        val e = kotlin.runCatching { EqWizard.solve(set, EqOptions(minHz = 20.0, maxHz = 20000.0)) }.exceptionOrNull()
+        assertTrue(e?.message?.contains("no phase") == true, "${e?.message}")
+    }
+
+    @Test
+    fun twoColumnRowsReadInEveryLayout() {
+        assertEquals(listOf(20.0, 80.5), Importer.twoNumbers("20.0,80.5"))
+        assertEquals(listOf(20.0, 80.5), Importer.twoNumbers("20.0 80.5"))
+        assertEquals(listOf(20.0, 80.5), Importer.twoNumbers("20,0;80,5"))
+        assertEquals(listOf(20.0, 80.5), Importer.twoNumbers("20,0 80,5"))
+        // One number with a decimal comma is not two columns.
+        assertEquals(null, Importer.twoNumbers("20,5"))
+        assertEquals(null, Importer.twoNumbers("20.0 80.5 12.0"))
+
+        val dir = createTempDirectory("eq").toFile()
+        val file = File(dir, "L.csv")
+        file.writeText(buildString { append("Freq(Hz),SPL(dB)\n"); var hz = 20.0; while (hz <= 20000.0) { append("%.4f,80.0\n".format(java.util.Locale.ROOT, hz)); hz *= 1.02 }; append("20000.0,80.0\n") })
+        val d = DesignOptions(irMode = IrMode.STEREO, stereoMinHz = 20.0, stereoMaxHz = 20000.0, magnitudeOnly = true)
+        val set = MeasurementSet.load(listOf(Measurement(file.path, Seat.DRIVER, "c", Channel.L, Band.COMBINED, "")), d, emptySet())
+        assertTrue(set.loadErrors.isEmpty(), set.loadErrors.joinToString { it.message })
+    }
+
+    @Test
+    fun bandSolosThatGetSummedStillNeedOneTimingReference() {
+        // With phase but different references: their sum would be meaningless, so it's an error.
+        val dir = createTempDirectory("eq").toFile()
+        val ms = Band.BRANCHES.mapIndexed { i, b ->
+            val file = File(dir, "L_${b.name}.txt")
+            Fixtures.writeRew(file, { hz -> Fixtures.band(b, hz) })
+            Measurement(file.path, Seat.DRIVER, "c", Channel.L, b, "ref-$i")
+        }
+        val d = DesignOptions(irMode = IrMode.STEREO, stereoMinHz = 20.0, stereoMaxHz = 20000.0, magnitudeOnly = true)
+        val checks = Checks.run(MeasurementSet.load(ms, d, emptySet()), CheckScope.eqWizard(ms))
+        assertTrue(checks.items.any { it.severity == Severity.ERROR && "timing reference" in it.title }, checks.items.joinToString { it.title })
+        // A Combined sweep beside them is used on its own: no reference needed for anything.
+        val combined = File(dir, "L_combined.txt").also { f -> Fixtures.writeRew(f, { hz -> Fixtures.C(1.0, 0.0) }) }
+        val ms2 = ms + Measurement(combined.path, Seat.DRIVER, "c", Channel.L, Band.COMBINED, "")
+        val checks2 = Checks.run(MeasurementSet.load(ms2, d, emptySet()), CheckScope.eqWizard(ms2))
+        assertTrue(checks2.items.none { "timing reference" in it.title }, checks2.items.joinToString { it.title })
+    }
+}
