@@ -81,6 +81,9 @@ dependencies { robolectricRuntime("org.robolectric:android-all-instrumented:15-r
 val robolectricJars = tasks.register<Copy>("robolectricJars") {
     from(robolectricRuntime)
     into(layout.buildDirectory.dir("robolectric-jars"))
+    // Already there (an earlier build, or CI's cache): don't fetch ~150 MB again.
+    val jars = layout.buildDirectory.dir("robolectric-jars")
+    onlyIf { jars.get().asFile.listFiles { f -> f.name.endsWith(".jar") }.isNullOrEmpty() }
 }
 tasks.withType<Test>().configureEach {
     dependsOn(robolectricJars)

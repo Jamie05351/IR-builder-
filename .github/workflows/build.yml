@@ -63,6 +63,19 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v6
+      # Robolectric's Android runtime (~150 MB) comes from Maven Central, which sometimes answers
+      # 429 Too Many Requests: keep it cached between runs, and retry the download with a pause.
+      - uses: actions/cache@v5
+        with:
+          path: android/build/robolectric-jars
+          key: robolectric-${{ hashFiles('android/build.gradle.kts') }}
+      - name: Fetch the Robolectric runtime
+        run: |
+          for i in 1 2 3 4 5; do
+            ./gradlew --no-daemon :android:robolectricJars && exit 0
+            echo "Download failed (attempt $i), retrying in $((i * 30)) s"; sleep $((i * 30))
+          done
+          exit 1
       # The runner's Android SDK (ANDROID_HOME). Each build gets a higher version code so a new
       # APK installs over the previous one; all are signed with android/sideload.keystore.
       - name: Test and build the APK
