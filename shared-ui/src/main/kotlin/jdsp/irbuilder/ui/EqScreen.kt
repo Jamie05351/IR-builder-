@@ -13,6 +13,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import jdsp.irbuilder.CurvePoint
+import jdsp.irbuilder.EqBank
 import jdsp.irbuilder.EqOptions
 import jdsp.irbuilder.HouseCurve
 import jdsp.irbuilder.EqSide
@@ -30,9 +31,11 @@ fun EqScreen(state: AppState) {
         Panel("EQ Wizard", accent = Jdsp.Cyan) {
             Note(
                 "Fits J_DSP Parametric EQ bands (peaking) so the system's response, averaged over both seats, follows a house curve. " +
-                    "It works on what you measured through the current tune, so the bands are corrections on top of your EQ: import them " +
-                    "into Pre EQ with Append. Cuts are free; boosts are capped and never chase a narrow dip, which is cancellation EQ " +
-                    "can't fill. Use it last, on the finished crossovers, delays and IRs.",
+                    "Pre EQ gets only what both channels need alike, as L+R bands: the factory DSP's own colouring. What one side needs and " +
+                    "the other doesn't, or what one band gets wrong, goes to the Low, Mid and High EQs, each only where its band carries the " +
+                    "sound (the crossover regions are Band Align's and the IRs' job). It works on what you measured through the current tune, " +
+                    "so the bands are corrections on top of your EQ: import them with Append. Cuts are free; boosts are capped and never chase " +
+                    "a narrow dip, which is cancellation EQ can't fill. Use it last, on the finished crossovers, delays and IRs.",
                 Color.White,
             )
         }
@@ -43,31 +46,58 @@ fun EqScreen(state: AppState) {
                 Labeled("Fit to (Hz)") { NumberField(e.maxHz, { set(e.copy(maxHz = it)) }, width = 90.dp) }
             }
             WrapRow(18.dp, Alignment.Bottom) {
-                Labeled("Bands per side") { NumberField(e.maxBands.toDouble(), { set(e.copy(maxBands = it.toInt())) }, width = 80.dp) }
                 Labeled("Max boost (dB)") { NumberField(e.maxBoostDb, { set(e.copy(maxBoostDb = it)) }, width = 80.dp) }
                 Labeled("Max cut (dB)") { NumberField(e.maxCutDb, { set(e.copy(maxCutDb = it)) }, width = 80.dp) }
                 Labeled("Max Q (cuts)") { NumberField(e.maxQ, { set(e.copy(maxQ = it)) }, width = 80.dp) }
-                Labeled("Same EQ both sides") { GlassSwitch(e.linked, { set(e.copy(linked = it)) }) }
             }
-            Note("The house curve is levelled to your response between 300 Hz and 3 kHz (or the measured fit range): only its shape matters. J_DSP's Pre EQ bank holds 16 bands in all: per side that's 8 each, minus any you already use.")
+            Note("The house curve is levelled to each side's response (the median over the fit range): only its shape matters, and each side keeps its own level.")
+        }
+        Panel("Pre EQ and band EQ", accent = Jdsp.LightBlue) {
+            WrapRow(18.dp, Alignment.Bottom) {
+                Labeled("Pre EQ (shared L+R)") { GlassSwitch(e.preEq, { set(e.copy(preEq = it)) }) }
+                Labeled("Pre EQ bands") { NumberField(e.preBands.toDouble(), { set(e.copy(preBands = it.toInt())) }, width = 80.dp) }
+            }
+            Note("Only the correction left and right both need, the smaller of the two where they agree: what the factory DSP does to the whole system. Needs both sides measured.")
+            WrapRow(18.dp, Alignment.Bottom) {
+                Labeled("Low/Mid/High EQ") { GlassSwitch(e.bandEq, { set(e.copy(bandEq = it)) }) }
+                Labeled("Bands per band, per side") { NumberField(e.maxBands.toDouble(), { set(e.copy(maxBands = it.toInt())) }, width = 80.dp) }
+                Labeled("Same band EQ both sides") { GlassSwitch(e.linked, { set(e.copy(linked = it)) }) }
+            }
+            WrapRow(18.dp, Alignment.Bottom) {
+                Labeled("Low/Mid split (Hz)") { NumberField(e.lowMidHz, { set(e.copy(lowMidHz = it)) }, width = 90.dp, accent = Jdsp.LowBand) }
+                Labeled("Mid/High split (Hz)") { NumberField(e.midHighHz, { set(e.copy(midHighHz = it)) }, width = 90.dp, accent = Jdsp.HighBand) }
+            }
+            Note(
+                "The rest, per side: each band's EQ works only where that band has at least 80 % of the sound, read from your band solos. " +
+                    "With only Combined sweeps, the bands are split at these two frequencies instead: set them to J_DSP's crossovers. " +
+                    "Each J_DSP bank holds 16 bands: per side that's 8 each, minus any you already use.",
+            )
             state.eqError?.let { Note(it, Jdsp.MRed) }
             GlassButton("Fit EQ", { state.runEq() }, accent = Jdsp.MGreen, enabled = state.eqError == null && state.measurements.isNotEmpty() && state.busy == null)
         }
         val r = state.eqResult ?: return@Column
         r.warnings.forEach { Note("• $it", Jdsp.MidYellow) }
         Panel("Export for J_DSP", accent = Jdsp.MGreen) {
-            WrapRow(12.dp, Alignment.CenterVertically) {
-                GlassButton("Save PEQ file…", { Dialogs.saveFile("Save PEQ file", EqWizard.EXPORT_FILE) { state.exportEq(it) } }, accent = Jdsp.MGreen, enabled = state.busy == null)
-                state.eqExported?.let { file ->
-                    GlassButton(Dialogs.REVEAL_LABEL, { Dialogs.reveal(file) }, accent = Jdsp.LightBlue)
-                    Text(file.path, color = Jdsp.MGreen, fontSize = 13.sp)
+            val banks = EqBank.entries.filter { r.bank(it).isNotEmpty() }
+            if (banks.isEmpty()) Note("Nothing to export: the response already follows the target within the limits set.", Color.White)
+            banks.forEach { bank ->
+                WrapRow(12.dp, Alignment.CenterVertically) {
+                    GlassButton("Save ${bank.label} file…", { Dialogs.saveFile("Save ${bank.label} file", bank.fileName) { state.exportEq(bank, it) } }, accent = Jdsp.MGreen, enabled = state.busy == null)
+                    Text("${r.bank(bank).size} band(s)", color = Jdsp.TextDim, fontSize = 13.sp)
+                    state.eqExported[bank]?.let { file ->
+                        GlassButton(Dialogs.REVEAL_LABEL, { Dialogs.reveal(file) }, accent = Jdsp.LightBlue)
+                        Text(file.path, color = Jdsp.MGreen, fontSize = 13.sp)
+                    }
                 }
             }
-            listOf(
-                "Copy the file to the head unit. Keep \"input\" in its name: J_DSP routes it to Pre EQ.",
-                "Parametric EQ → Import → pick the file → Append (adds these bands on top of the ones you measured with).",
-                if (r.preampDb < 0) "The bands boost up to %.1f dB somewhere: lower Pre EQ's preamp by that much (Append leaves the preamp alone).".format(-r.preampDb)
-                else "The bands only cut: no preamp change needed.",
+            if (banks.isNotEmpty()) listOf(
+                "Copy the files to the head unit. Keep their names: \"input\" routes a file to Pre EQ, \"low\", \"mid\" and \"high\" to that band's EQ.",
+                "Parametric EQ → each EQ → Import → pick its file → Append (adds these bands on top of the ones you measured with).",
+                banks.joinToString(" ") { b ->
+                    val p = r.preamp(b)
+                    if (p < 0) "${b.label}'s bands boost up to %.1f dB somewhere: lower its preamp by that much (Append leaves the preamp alone).".format(-p)
+                    else "${b.label}'s bands only cut: no preamp change."
+                },
                 "Re-measure both seats and run the wizard again; it should find little left to do.",
             ).forEachIndexed { i, s -> Note("${i + 1}. $s") }
         }
@@ -151,16 +181,16 @@ private fun SidePanel(s: EqSideResult, f: DoubleArray, e: EqOptions) {
             val top = ceil((ys.max() + 3) / 5) * 5
             val bottom = maxOf(floor((ys.min() - 3) / 5) * 5, top - 50)
             LinePlot(series, bottom, top, "dB", height = 260.dp, accent = accent)
-            LinePlot(listOf(ser("EQ", s.eqDb, accent, 2.5f), ser("Wanted", s.wantedDb, Jdsp.TextDim, 1.5f, dashed = true)), -14.0, 8.0, "dB", height = 160.dp, accent = accent)
-            Note("Lower plot: the EQ's own curve, and what it was asked to do (target − response, boosts held back where the octave-wide response doesn't lack it).")
+            LinePlot(listOf(ser("All EQ", s.eqDb, accent, 2.5f), ser("Pre EQ", s.preDb, Jdsp.Cyan, 1.5f), ser("Wanted", s.wantedDb, Jdsp.TextDim, 1.5f, dashed = true)), -14.0, 8.0, "dB", height = 160.dp, accent = accent)
+            Note("Lower plot: what all the EQ does to this side's sum, Pre EQ's part of it, and what was asked for (target − response, boosts held back where the octave-wide response doesn't lack it). The gap between All EQ and Pre EQ is this side's band EQs.")
         }
         Table {
             TableRow {
-                listOf("#" to 30, "Type" to 50, "Side" to 50, "Frequency" to 110, "Gain" to 90, "Q" to 70).forEach { (t, w) -> Text(t, color = Jdsp.TextDim, fontSize = 12.sp, modifier = Modifier.width(w.dp)) }
+                listOf("#" to 30, "EQ" to 70, "Type" to 50, "Side" to 50, "Frequency" to 110, "Gain" to 90, "Q" to 70).forEach { (t, w) -> Text(t, color = Jdsp.TextDim, fontSize = 12.sp, modifier = Modifier.width(w.dp)) }
             }
             s.bands.forEachIndexed { i, b ->
                 TableRow {
-                    Cell("${i + 1}", 30); Cell("PK", 50); Cell(b.side.label, 50)
+                    Cell("${i + 1}", 30); Cell(b.bank.label, 70, bankColor(b.bank)); Cell("PK", 50); Cell(b.side.label, 50)
                     Cell("${trimNumber(b.hz)} Hz", 110, Color.White)
                     Cell("%+.1f dB".format(b.gainDb), 90, if (b.gainDb > 0) Jdsp.MidYellow else Jdsp.MGreen)
                     Cell(trimNumber(b.q), 70)
@@ -169,4 +199,11 @@ private fun SidePanel(s: EqSideResult, f: DoubleArray, e: EqOptions) {
         }
         Text("", fontSize = 4.sp, fontWeight = FontWeight.Normal)
     }
+}
+
+private fun bankColor(b: EqBank) = when (b) {
+    EqBank.PRE -> Jdsp.Cyan
+    EqBank.LOW -> Jdsp.LowBand
+    EqBank.MID -> Jdsp.MidBand
+    EqBank.HIGH -> Jdsp.HighBand
 }

@@ -68,12 +68,12 @@ private fun StartScreen(state: AppState) {
                 "Steps: Measurements → Checks → Crossover Finder",
             ),
             CardSpec(
-                Tool.EQ_WIZARD, Jdsp.Cyan, "PEQ bands toward a target, for J_DSP's Pre EQ",
+                Tool.EQ_WIZARD, Jdsp.Cyan, "PEQ bands toward a target: Pre EQ and Low/Mid/High EQ",
                 listOf(
                     "Fits peaking bands so the system's response at both seats follows a house curve (built in, or your own).",
-                    "Cuts peaks freely; boosts are capped and never fill a narrow dip (cancellation EQ can't fix).",
-                    "Per side or one set for both; J_DSP's own biquad maths, its 16-band limit.",
-                    "Result: an Equalizer APO file J_DSP's Parametric EQ imports (Append to Pre EQ).",
+                    "Pre EQ gets only what both channels need alike (the factory DSP's colouring), as L+R bands.",
+                    "The rest goes to the Low, Mid and High EQs, per side, each where its band carries the sound.",
+                    "Result: an Equalizer APO file per EQ to import (Append). Boosts are capped and never fill a narrow dip.",
                 ),
                 "Steps: Measurements → Checks → EQ Wizard",
             ),
@@ -221,7 +221,7 @@ private fun Sidebar(state: AppState) {
                 Tool.BAND_ALIGN -> "Band Align proposes J_DSP delay and polarity changes. Make them, then re-measure before designing IRs."
                 Tool.PHASE_IRS -> "Phase-only, correction-only IRs: J_DSP's crossovers, PEQ and delays stay as measured. Verify with fresh measurements."
                 Tool.CROSSOVER_FINDER -> "Crossover Finder proposes J_DSP crossover, delay and polarity changes within your limits. Make them, then re-measure."
-                Tool.EQ_WIZARD -> "EQ Wizard proposes PEQ bands on top of your current tune. Import them into Pre EQ (Append), then re-measure."
+                Tool.EQ_WIZARD -> "EQ Wizard proposes PEQ bands on top of your current tune: shared ones for Pre EQ, the rest per band. Import them (Append), then re-measure."
                 null -> "Four separate tools. Each starts from its own measurements."
             },
         )
@@ -233,7 +233,7 @@ private fun stepStatus(state: AppState, s: Step): Pair<String?, Color> = when (s
     Step.CHECKS -> state.checks?.let { if (it.errors > 0) "${it.errors}✕" to Jdsp.MRed else if (it.warnings > 0) "${it.warnings}!" to Jdsp.MidYellow else "✓" to Jdsp.MGreen } ?: (null to Color.White)
     Step.BAND_ALIGN -> state.alignment?.let { if (it.error != null) "!" to Jdsp.MRed else if (it.hasChanges) "${it.changes.size}" to Jdsp.MGreen else "✓" to Jdsp.MGreen } ?: (null to Color.White)
     Step.FINDER -> state.finding?.let { if (it.error != null) "!" to Jdsp.MRed else if (it.hasChanges) "${it.filterChanges.size + it.timingChanges.size}" to Jdsp.MGreen else "✓" to Jdsp.MGreen } ?: ((if (state.finderError != null) "!" else null) to Jdsp.MRed)
-    Step.EQ -> state.eqResult?.let { (if (state.eqExported != null) "✓" else "${it.bands.size}") to Jdsp.MGreen } ?: ((if (state.eqError != null) "!" else null) to Jdsp.MRed)
+    Step.EQ -> state.eqResult?.let { (if (state.eqExported.isNotEmpty()) "✓" else "${it.bands.size}") to Jdsp.MGreen } ?: ((if (state.eqError != null) "!" else null) to Jdsp.MRed)
     Step.DESIGN -> (if (state.optionsError != null) "!" else null) to Jdsp.MRed
     Step.PREVIEW -> (if (state.hasDesign) "✓" else null) to Jdsp.MGreen
     Step.EXPORT -> (if (state.exportedZip != null) "✓" else null) to Jdsp.MGreen

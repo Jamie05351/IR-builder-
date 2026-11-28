@@ -49,18 +49,94 @@ class EqWizardTest {
             assertTrue(s.rmsAfterDb < s.rmsBeforeDb * 0.6, "${s.side}: ${s.rmsBeforeDb} -> ${s.rmsAfterDb}")
             assertTrue(s.bands.all { it.gainDb <= 4.0 && it.q in 0.3..8.0 && (it.gainDb <= 0 || it.q <= 3.0) })
         }
+        // Left and right alike: the hump is the shared (factory) part, so Pre EQ, L+R, takes it.
+        assertTrue(r.bank(EqBank.PRE).any { it.side == EqSide.BOTH && it.hz in 140.0..280.0 && it.gainDb < -3 }, "${r.bands}")
         assertEquals(listOf(EqSide.LEFT, EqSide.RIGHT), r.sides.map { it.side })
     }
 
+    /** Combined sweeps of [sweeps], with the right side alone given an extra band. */
+    private fun sweepsWithRight(extra: EqBand): List<Measurement> {
+        val dir = createTempDirectory("eq").toFile()
+        val hump = EqBand(200.0, 6.0, 1.0)
+        val out = ArrayList<Measurement>()
+        for (seat in Seat.entries) for (ch in Channel.entries) {
+            val file = File(dir, "${seat.name}_${ch.name}_combined.txt")
+            Fixtures.writeRew(file, { hz ->
+                var db = 80 + EqWizard.peakDb(hump, hz, fs)
+                if (ch == Channel.R) db += EqWizard.peakDb(extra, hz, fs)
+                val m = Math.pow(10.0, db / 20)
+                Fixtures.C(m * kotlin.math.cos(-2 * Math.PI * hz * 0.003), m * kotlin.math.sin(-2 * Math.PI * hz * 0.003))
+            })
+            out += Measurement(file.path, seat, "c", ch, Band.COMBINED, "ref-${ch.name}")
+        }
+        return out
+    }
+
     @Test
-    fun linkedFitsOneSetForBothSidesAndPerSideSeesTheirDifference() {
-        val linked = solve(sweeps(rightExtraDb = 6.0), EqOptions(bassLiftDb = 0.0, trebleTiltDb = 0.0, linked = true))
-        assertEquals(listOf(EqSide.BOTH), linked.sides.map { it.side })
-        val split = solve(sweeps(rightExtraDb = 6.0), EqOptions(bassLiftDb = 0.0, trebleTiltDb = 0.0))
-        val right = split.sides.single { it.side == EqSide.RIGHT }
-        val left = split.sides.single { it.side == EqSide.LEFT }
-        assertTrue(right.bands.any { it.hz in 2000.0..4500.0 && it.gainDb < -3 }, "${right.bands}")
-        assertTrue(left.bands.none { it.hz in 2000.0..4500.0 && it.gainDb < -3 }, "${left.bands}")
+    fun preEqTakesOnlyWhatBothSidesShareAndBandEqTheRest() {
+        // Both sides have the 200 Hz hump (the factory DSP's); only the right has a 1.2 kHz one.
+        val r = solve(sweepsWithRight(EqBand(1200.0, 6.0, 2.0)), EqOptions(bassLiftDb = 0.0, trebleTiltDb = 0.0))
+        assertEquals(listOf(EqSide.LEFT, EqSide.RIGHT), r.sides.map { it.side })
+        val pre = r.bank(EqBank.PRE)
+        assertTrue(pre.isNotEmpty() && pre.all { it.side == EqSide.BOTH }, "$pre")
+        assertTrue(pre.any { it.hz in 140.0..280.0 && it.gainDb < -3 }, "$pre")
+        val i = r.freqs.indices.minBy { abs(r.freqs[it] - 1200.0) }
+        assertTrue(EqWizard.eqDb(pre, r.freqs, fs)[i] > -1.5, "Pre EQ cuts the right side's own peak: $pre")
+        // The one-sided peak goes to the right's Mid EQ (1.2 kHz is Mid's, crossovers 150 / 3500 Hz).
+        val mid = r.bank(EqBank.MID)
+        assertTrue(mid.any { it.side == EqSide.RIGHT && it.hz in 800.0..1800.0 && it.gainDb < -3 }, "$mid")
+        assertTrue(mid.none { it.side == EqSide.LEFT && it.gainDb < -1.5 }, "$mid")
+        val right = r.sides.single { it.side == EqSide.RIGHT }
+        assertTrue(right.eqDb[i] < -4, "right at 1.2 kHz: ${right.eqDb[i]}")
+        assertTrue(right.rmsAfterDb < right.rmsBeforeDb * 0.6, "${right.rmsBeforeDb} -> ${right.rmsAfterDb}")
+        // No band EQ reaches into a crossover region.
+        for (b in r.bands.filter { it.bank != EqBank.PRE }) {
+            assertTrue(b.bank == EqBank.MID && b.hz in 180.0..3000.0 || b.bank == EqBank.LOW && b.hz < 125 || b.bank == EqBank.HIGH && b.hz > 4000, "$b")
+        }
+    }
+
+    @Test
+    fun linkedBandEqIsOneSetForBothSidesAndTheBanksCanBeSwitchedOff() {
+        val ms = sweepsWithRight(EqBand(1200.0, 6.0, 2.0))
+        val linked = solve(ms, EqOptions(bassLiftDb = 0.0, trebleTiltDb = 0.0, linked = true))
+        assertTrue(linked.bands.all { it.side == EqSide.BOTH }, "${linked.bands}")
+        val noPre = solve(ms, EqOptions(bassLiftDb = 0.0, trebleTiltDb = 0.0, preEq = false))
+        assertTrue(noPre.bank(EqBank.PRE).isEmpty())
+        assertTrue(noPre.bank(EqBank.MID).any { it.side == EqSide.LEFT && it.hz in 140.0..280.0 && it.gainDb < -3 }, "${noPre.bands}")
+        val preOnly = solve(ms, EqOptions(bassLiftDb = 0.0, trebleTiltDb = 0.0, bandEq = false))
+        assertTrue(preOnly.bands.all { it.bank == EqBank.PRE && it.side == EqSide.BOTH }, "${preOnly.bands}")
+        kotlin.test.assertFailsWith<IllegalArgumentException> { EqOptions(preEq = false, bandEq = false).validate() }
+    }
+
+    @Test
+    fun bandSolosSayWhichBandCarriesTheError() {
+        // Phased band solos at both seats; the left Low band alone has a +6 dB hump at 50 Hz.
+        val dir = createTempDirectory("eq").toFile()
+        val ms = ArrayList<Measurement>()
+        for (seat in Seat.entries) for (ch in Channel.entries) for (b in Band.BRANCHES) {
+            val file = File(dir, "${seat.name}_${ch.name}_${b.name}.txt")
+            val lift = if (ch == Channel.L && b == Band.LOW) EqBand(50.0, 6.0, 1.5) else null
+            Fixtures.writeRew(file, { hz -> Fixtures.band(b, hz).let { c -> if (lift == null) c else c.scale(Math.pow(10.0, EqWizard.peakDb(lift, hz, fs) / 20)) } })
+            ms += Measurement(file.path, seat, "c", ch, b, "ref-${ch.name}")
+        }
+        val r = solve(ms, EqOptions(bassLiftDb = 0.0, trebleTiltDb = 0.0))
+        val low = r.bank(EqBank.LOW)
+        assertTrue(low.any { it.side == EqSide.LEFT && it.hz in 30.0..80.0 && it.gainDb < -3 }, "${r.bands}")
+        assertTrue(r.bank(EqBank.PRE).none { it.hz < 100 && it.gainDb < -1.5 }, "${r.bands}")
+        assertTrue(r.bands.none { it.side == EqSide.RIGHT && it.gainDb < -1.5 }, "${r.bands}")
+        val i = r.freqs.indices.minBy { abs(r.freqs[it] - 50.0) }
+        assertTrue(r.sides.single { it.side == EqSide.LEFT }.eqDb[i] < -4)
+    }
+
+    @Test
+    fun eachBankExportsItsOwnFile() {
+        val r = solve(sweepsWithRight(EqBand(1200.0, 6.0, 2.0)), EqOptions(bassLiftDb = 0.0, trebleTiltDb = 0.0))
+        val pre = EqWizard.apoText(r, EqBank.PRE)
+        val mid = EqWizard.apoText(r, EqBank.MID)
+        assertTrue(pre.startsWith("Preamp: ") && "Channel: ALL" in pre && "Channel: R" !in pre, pre)
+        assertTrue("Channel: R" in mid && "Channel: ALL" !in mid, mid)
+        assertEquals(r.bank(EqBank.PRE).size + r.bank(EqBank.MID).size, (pre + mid).lines().count { it.startsWith("Filter") })
+        assertTrue("input" in EqBank.PRE.fileName && EqBank.BANDS.all { it.band!!.fileName in it.fileName })
     }
 
     @Test
@@ -134,12 +210,15 @@ class EqWizardTest {
         }
         val curve = listOf(CurvePoint(20.0, 0.0), CurvePoint(2000.0, 0.0), CurvePoint(5000.0, -6.0), CurvePoint(20000.0, -6.0))
         val r = solve(ms, EqOptions(curve = curve, useCurve = true, linked = true))
-        val s = r.sides.single()
+        for (s in r.sides) {
         val i = r.freqs.indices.minBy { abs(r.freqs[it] - 8000.0) }
         assertEquals(-6.0, s.eqDb[i], 1.0)
         val j = r.freqs.indices.minBy { abs(r.freqs[it] - 500.0) }
         assertEquals(0.0, s.eqDb[j], 1.0)
         assertTrue(s.rmsAfterDb < 1.0, "${s.rmsBeforeDb} -> ${s.rmsAfterDb}")
+        }
+        // Both sides alike: it's all Pre EQ.
+        assertTrue(r.bands.all { it.bank == EqBank.PRE }, "${r.bands}")
     }
 
     @Test

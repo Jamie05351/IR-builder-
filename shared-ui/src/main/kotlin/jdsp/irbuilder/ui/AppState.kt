@@ -95,7 +95,7 @@ class AppState(private var scope: CoroutineScope) {
         private set
     var eqError by mutableStateOf<String?>(null)
     var eqResult by mutableStateOf<jdsp.irbuilder.EqResult?>(null)
-    var eqExported by mutableStateOf<File?>(null)
+    var eqExported by mutableStateOf<Map<jdsp.irbuilder.EqBank, File>>(emptyMap())
     var busy by mutableStateOf<String?>(null)
     var status by mutableStateOf("Import software-band-solo sweeps for both seats and both channels.")
     var errorMessage by mutableStateOf<String?>(null)
@@ -110,7 +110,7 @@ class AppState(private var scope: CoroutineScope) {
         alignment = null
         finding = null
         eqResult = null
-        eqExported = null
+        eqExported = emptyMap()
         design = null
         stereoDesign = null
         exportedZip = null
@@ -134,7 +134,7 @@ class AppState(private var scope: CoroutineScope) {
         eq = e
         eqError = runCatching { e.validate() }.exceptionOrNull()?.message
         eqResult = null
-        eqExported = null
+        eqExported = emptyMap()
     }
 
     /** Crossover Finder inputs changed: its result goes; the checks too if what they cover changed. */
@@ -381,11 +381,11 @@ class AppState(private var scope: CoroutineScope) {
         }
         publish(s, c)
         eqResult = r
-        eqExported = null
+        eqExported = emptyMap()
         if (r == null) {
             status = "EQ Wizard blocked: ${c.errors} error(s) on the Checks page."
             step = Step.CHECKS
-        } else status = "EQ Wizard: ${r.bands.size} band(s). Preview, then export for J_DSP's Pre EQ."
+        } else status = "EQ Wizard: " + jdsp.irbuilder.EqBank.entries.mapNotNull { b -> r.bank(b).size.takeIf { it > 0 }?.let { "$it in ${b.label}" } }.ifEmpty { listOf("no bands needed") }.joinToString(", ") + ". Export a file per EQ."
     }
 
     fun importCurve(file: File) = background("Reading house curve…") {
@@ -401,11 +401,11 @@ class AppState(private var scope: CoroutineScope) {
         Dialogs.written(f)
     }
 
-    fun exportEq(file: File) = background("Writing PEQ file…") {
+    fun exportEq(bank: jdsp.irbuilder.EqBank, file: File) = background("Writing ${bank.label} file…") {
         val r = eqResult ?: throw IllegalStateException("Run the EQ Wizard first")
         val f = if (file.extension.equals("txt", true)) file else File(file.path + ".txt")
-        withContext(Dispatchers.IO) { f.writeText(jdsp.irbuilder.EqWizard.apoText(r)) }
-        eqExported = f
+        withContext(Dispatchers.IO) { f.writeText(jdsp.irbuilder.EqWizard.apoText(r, bank)) }
+        eqExported = eqExported + (bank to f)
         status = "Exported ${f.path}"
         Dialogs.written(f)
     }

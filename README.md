@@ -47,10 +47,20 @@ measurements; none runs another.
 
 - **EQ Wizard** (Measurements → Checks → EQ Wizard): J_DSP Parametric EQ bands (peaking, J_DSP's
   own biquad) that bring each side's response, averaged over both seats, toward a house curve (a
-  bass lift and a treble tilt). Cuts are free; boosts are capped and never exceed what the
-  octave-wide response lacks, so narrow dips (cancellation) aren't filled. Per side or one set for
-  both. Exports Equalizer APO text (`input_eq_wizard.txt`) that J_DSP's Parametric EQ imports into
-  Pre EQ; append it, since it corrects the tune you measured.
+  bass lift and a treble tilt, or your own). The correction is split between J_DSP's EQs:
+  - **Pre EQ** gets only what both channels need alike (where left and right both want a cut, or
+    both a boost, the smaller of the two), as L+R bands: the factory DSP's own colouring of the
+    whole system. Anything one side needs and the other doesn't stays out of it. Needs both sides.
+  - **Low / Mid / High EQ** get the rest, per side (or one set for both), each only where its
+    software band carries at least 80 % of the sound: read from the band solos, or from the
+    Low/Mid and Mid/High frequencies set on the page when only Combined sweeps were taken. The
+    crossover regions are left to Band Align and the phase IRs.
+
+  Cuts are free; boosts are capped and never exceed what the octave-wide response lacks, so narrow
+  dips (cancellation) aren't filled. The house curve is levelled to each side by the median over
+  the fit range, so balance is never EQ'd. Exports one Equalizer APO file per EQ
+  (`input_eq_wizard.txt` for Pre EQ, `low_` / `mid_` / `high_eq_wizard.txt` for the bands), each
+  with its own preamp; append them, since they correct the tune you measured.
 
 ### Shared measurement handling
 
