@@ -30,11 +30,11 @@ fun EqScreen(state: AppState) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Panel("EQ Wizard", accent = Jdsp.Cyan) {
             Note(
-                "Fits J_DSP Parametric EQ bands (peaking) so the system's response, averaged over both seats, follows a house curve. " +
-                    "Pre EQ gets only what both channels need alike, as L+R bands: the factory DSP's own colouring. What one side needs and " +
+                "Fits J_DSP Parametric EQ filters (peaking) so the system's response, averaged over both seats, follows a house curve. " +
+                    "Pre EQ gets only what both channels need alike, as L+R filters: the factory DSP's own colouring. What one side needs and " +
                     "the other doesn't, or what one band gets wrong, goes to the Low, Mid and High EQs, each only where its band carries the " +
                     "sound (the crossover regions are Band Align's and the IRs' job). It works on what you measured through the current tune, " +
-                    "so the bands are corrections on top of your EQ: import them with Append. Cuts are free; boosts are capped and never chase " +
+                    "so the filters are corrections on top of your EQ: import them with Append. Cuts are free; boosts are capped and never chase " +
                     "a narrow dip, which is cancellation EQ can't fill. Use it last, on the finished crossovers, delays and IRs.",
                 Color.White,
             )
@@ -55,12 +55,12 @@ fun EqScreen(state: AppState) {
         Panel("Pre EQ and band EQ", accent = Jdsp.LightBlue) {
             WrapRow(18.dp, Alignment.Bottom) {
                 Labeled("Pre EQ (shared L+R)") { GlassSwitch(e.preEq, { set(e.copy(preEq = it)) }) }
-                Labeled("Pre EQ bands") { NumberField(e.preBands.toDouble(), { set(e.copy(preBands = it.toInt())) }, width = 80.dp) }
+                Labeled("Pre EQ filters") { NumberField(e.preBands.toDouble(), { set(e.copy(preBands = it.toInt())) }, width = 80.dp) }
             }
             Note("Only the correction left and right both need, the smaller of the two where they agree: what the factory DSP does to the whole system. Needs both sides measured.")
             WrapRow(18.dp, Alignment.Bottom) {
                 Labeled("Low/Mid/High EQ") { GlassSwitch(e.bandEq, { set(e.copy(bandEq = it)) }) }
-                Labeled("Bands per band, per side") { NumberField(e.maxBands.toDouble(), { set(e.copy(maxBands = it.toInt())) }, width = 80.dp) }
+                Labeled("Filters per band, per side") { NumberField(e.maxBands.toDouble(), { set(e.copy(maxBands = it.toInt())) }, width = 80.dp) }
                 Labeled("Same band EQ both sides") { GlassSwitch(e.linked, { set(e.copy(linked = it)) }) }
             }
             WrapRow(18.dp, Alignment.Bottom) {
@@ -70,7 +70,7 @@ fun EqScreen(state: AppState) {
             Note(
                 "The rest, per side: each band's EQ works only where that band has at least 80 % of the sound, read from your band solos. " +
                     "With only Combined sweeps, the bands are split at these two frequencies instead: set them to J_DSP's crossovers. " +
-                    "Each J_DSP bank holds 16 bands: per side that's 8 each, minus any you already use.",
+                    "Each J_DSP EQ holds 16 filters: per side that's 8 each, minus any you already use.",
             )
             state.eqError?.let { Note(it, Jdsp.MRed) }
             GlassButton("Fit EQ", { state.runEq() }, accent = Jdsp.MGreen, enabled = state.eqError == null && state.measurements.isNotEmpty() && state.busy == null)
@@ -83,7 +83,7 @@ fun EqScreen(state: AppState) {
             banks.forEach { bank ->
                 WrapRow(12.dp, Alignment.CenterVertically) {
                     GlassButton("Save ${bank.label} file…", { Dialogs.saveFile("Save ${bank.label} file", bank.fileName) { state.exportEq(bank, it) } }, accent = Jdsp.MGreen, enabled = state.busy == null)
-                    Text("${r.bank(bank).size} band(s)", color = Jdsp.TextDim, fontSize = 13.sp)
+                    Text("${r.bank(bank).size} filter(s)", color = Jdsp.TextDim, fontSize = 13.sp)
                     state.eqExported[bank]?.let { file ->
                         GlassButton(Dialogs.REVEAL_LABEL, { Dialogs.reveal(file) }, accent = Jdsp.LightBlue)
                         Text(file.path, color = Jdsp.MGreen, fontSize = 13.sp)
@@ -92,11 +92,11 @@ fun EqScreen(state: AppState) {
             }
             if (banks.isNotEmpty()) listOf(
                 "Copy the files to the head unit. Keep their names: \"input\" routes a file to Pre EQ, \"low\", \"mid\" and \"high\" to that band's EQ.",
-                "Parametric EQ → each EQ → Import → pick its file → Append (adds these bands on top of the ones you measured with).",
+                "Parametric EQ → each EQ → Import → pick its file → Append (adds these filters on top of the ones you measured with).",
                 banks.joinToString(" ") { b ->
                     val p = r.preamp(b)
-                    if (p < 0) "${b.label}'s bands boost up to %.1f dB somewhere: lower its preamp by that much (Append leaves the preamp alone).".format(-p)
-                    else "${b.label}'s bands only cut: no preamp change."
+                    if (p < 0) "${b.label}'s filters boost up to %.1f dB somewhere: lower its preamp by that much (Append leaves the preamp alone).".format(-p)
+                    else "${b.label}'s filters only cut: no preamp change."
                 },
                 "Re-measure both seats and run the wizard again; it should find little left to do.",
             ).forEachIndexed { i, s -> Note("${i + 1}. $s") }
@@ -165,7 +165,7 @@ private fun SidePanel(s: EqSideResult, f: DoubleArray, e: EqOptions) {
     Panel(name, accent = accent) {
         WrapRow(16.dp) {
             Badge("RMS from target %.1f → %.1f dB".format(s.rmsBeforeDb, s.rmsAfterDb), if (s.rmsAfterDb < s.rmsBeforeDb) Jdsp.MGreen else Jdsp.MidYellow)
-            Text("${s.bands.size} band(s)", color = Jdsp.TextDim, fontSize = 13.sp)
+            Text("${s.bands.size} filter(s)", color = Jdsp.TextDim, fontSize = 13.sp)
         }
         val idx = f.indices.filter { f[it] in e.minHz / 1.5..e.maxHz * 1.5 }
         if (idx.size > 2) {

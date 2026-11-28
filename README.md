@@ -45,11 +45,11 @@ measurements; none runs another.
   Result: crossover, delay and polarity settings to enter in J_DSP, with seat plots and the
   next-best options.
 
-- **EQ Wizard** (Measurements → Checks → EQ Wizard): J_DSP Parametric EQ bands (peaking, J_DSP's
+- **EQ Wizard** (Measurements → Checks → EQ Wizard): J_DSP Parametric EQ filters (peaking, J_DSP's
   own biquad) that bring each side's response, averaged over both seats, toward a house curve (a
   bass lift and a treble tilt, or your own). The correction is split between J_DSP's EQs:
   - **Pre EQ** gets only what both channels need alike (where left and right both want a cut, or
-    both a boost, the smaller of the two), as L+R bands: the factory DSP's own colouring of the
+    both a boost, the smaller of the two), as L+R filters: the factory DSP's own colouring of the
     whole system. Anything one side needs and the other doesn't stays out of it. Needs both sides.
   - **Low / Mid / High EQ** get the rest, per side (or one set for both), each only where its
     software band carries at least 80 % of the sound: read from the band solos, or from the

@@ -68,10 +68,10 @@ private fun StartScreen(state: AppState) {
                 "Steps: Measurements → Checks → Crossover Finder",
             ),
             CardSpec(
-                Tool.EQ_WIZARD, Jdsp.Cyan, "PEQ bands toward a target: Pre EQ and Low/Mid/High EQ",
+                Tool.EQ_WIZARD, Jdsp.Cyan, "PEQ filters toward a target: Pre EQ and Low/Mid/High EQ",
                 listOf(
-                    "Fits peaking bands so the system's response at both seats follows a house curve (built in, or your own).",
-                    "Pre EQ gets only what both channels need alike (the factory DSP's colouring), as L+R bands.",
+                    "Fits peaking filters so the system's response at both seats follows a house curve (built in, or your own).",
+                    "Pre EQ gets only what both channels need alike (the factory DSP's colouring), as L+R filters.",
                     "The rest goes to the Low, Mid and High EQs, per side, each where its band carries the sound.",
                     "Result: an Equalizer APO file per EQ to import (Append). Boosts are capped and never fill a narrow dip.",
                 ),
@@ -221,7 +221,7 @@ private fun Sidebar(state: AppState) {
                 Tool.BAND_ALIGN -> "Band Align proposes J_DSP delay and polarity changes. Make them, then re-measure before designing IRs."
                 Tool.PHASE_IRS -> "Phase-only, correction-only IRs: J_DSP's crossovers, PEQ and delays stay as measured. Verify with fresh measurements."
                 Tool.CROSSOVER_FINDER -> "Crossover Finder proposes J_DSP crossover, delay and polarity changes within your limits. Make them, then re-measure."
-                Tool.EQ_WIZARD -> "EQ Wizard proposes PEQ bands on top of your current tune: shared ones for Pre EQ, the rest per band. Import them (Append), then re-measure."
+                Tool.EQ_WIZARD -> "EQ Wizard proposes PEQ filters on top of your current tune: shared ones for Pre EQ, the rest per band. Import them (Append), then re-measure."
                 null -> "Four separate tools. Each starts from its own measurements."
             },
         )

@@ -33,7 +33,7 @@ enum class Step(val title: String, val subtitle: String) {
     CHECKS("Checks", "Timing, quality, completeness"),
     BAND_ALIGN("Band Align", "Delay & polarity"),
     FINDER("Crossover Finder", "Frequency, slope, delay"),
-    EQ("EQ Wizard", "PEQ bands toward a target"),
+    EQ("EQ Wizard", "PEQ filters toward a target"),
     DESIGN("Design", "Crossovers, limits, seats"),
     PREVIEW("Preview", "Predicted result"),
     EXPORT("Export", "Package for J_DSP"),
@@ -367,7 +367,7 @@ class AppState(private var scope: CoroutineScope) {
         }
     }
 
-    fun runEq() = background("Fitting PEQ bands…") {
+    fun runEq() = background("Fitting PEQ filters…") {
         val snapshot = measurements.toList()
         val o = effectiveOptions()
         val e = eq
@@ -385,7 +385,7 @@ class AppState(private var scope: CoroutineScope) {
         if (r == null) {
             status = "EQ Wizard blocked: ${c.errors} error(s) on the Checks page."
             step = Step.CHECKS
-        } else status = "EQ Wizard: " + jdsp.irbuilder.EqBank.entries.mapNotNull { b -> r.bank(b).size.takeIf { it > 0 }?.let { "$it in ${b.label}" } }.ifEmpty { listOf("no bands needed") }.joinToString(", ") + ". Export a file per EQ."
+        } else status = "EQ Wizard: " + jdsp.irbuilder.EqBank.entries.mapNotNull { b -> r.bank(b).size.takeIf { it > 0 }?.let { "$it filter(s) in ${b.label}" } }.ifEmpty { listOf("no filters needed") }.joinToString(", ") + ". Export a file per EQ."
     }
 
     fun importCurve(file: File) = background("Reading house curve…") {

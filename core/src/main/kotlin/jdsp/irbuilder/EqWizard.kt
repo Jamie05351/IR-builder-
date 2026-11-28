@@ -110,7 +110,7 @@ data class EqOptions(
     val bassLiftDb: Double = 6.0,
     /** House curve: tilt from 1 kHz to 10 kHz, dB (negative is a falling treble). */
     val trebleTiltDb: Double = -3.0,
-    /** Bands per software band (Low, Mid, High) per side. */
+    /** Filters per software band (Low, Mid, High) per side. */
     val maxBands: Int = 4,
     /** Largest boost a band may give; boosting into cancellation wastes headroom. */
     val maxBoostDb: Double = 4.0,
@@ -127,7 +127,7 @@ data class EqOptions(
      * L+R bands. Off: nothing goes to Pre EQ.
      */
     val preEq: Boolean = true,
-    /** Pre EQ bands (L+R, so each takes one of the bank's 16). */
+    /** Pre EQ filters (L+R, so each takes one of the EQ's 16). */
     val preBands: Int = 6,
     /** The rest (what differs between the sides, or a band's own error) goes to the band EQs. */
     val bandEq: Boolean = true,
@@ -141,9 +141,9 @@ data class EqOptions(
         require(bassLiftDb in -6.0..15.0) { "Bass lift must be −6 to +15 dB" }
         require(trebleTiltDb in -12.0..6.0) { "Treble tilt must be −12 to +6 dB" }
         require(preEq || bandEq) { "Turn on Pre EQ, band EQ or both" }
-        require(preBands in 1..16) { "Pre EQ bands must be 1 to 16 (J_DSP's limit per bank)" }
-        require(maxBands in 1..16) { "Band EQ bands must be 1 to 16 per band (J_DSP's limit per bank)" }
-        require(!(maxBands > 8 && !linked)) { "Per-side band EQ uses each bank twice: at most 8 bands per side to fit J_DSP's 16" }
+        require(preBands in 1..16) { "Pre EQ filters must be 1 to 16 (J_DSP's limit per EQ)" }
+        require(maxBands in 1..16) { "Band EQ filters must be 1 to 16 per band (J_DSP's limit per EQ)" }
+        require(!(maxBands > 8 && !linked)) { "Per-side band EQ uses each EQ twice: at most 8 filters per side to fit J_DSP's 16" }
         require(maxBoostDb in 0.0..12.0 && maxCutDb in 0.0..30.0) { "Boost must be 0–12 dB and cut 0–30 dB" }
         require(maxQ in 1.0..30.0) { "Max Q must be 1 to 30" }
         require(lowMidHz >= 20 && midHighHz > lowMidHz * 2 && midHighHz <= 16000) { "Band split: Low/Mid from 20 Hz, Mid/High more than an octave above it and at most 16 kHz" }
@@ -194,7 +194,7 @@ class EqResult(
 }
 
 /**
- * EQ Wizard: J_DSP Parametric EQ bands (PK) that bring the system's response toward a target at
+ * EQ Wizard: J_DSP Parametric EQ filters (PK) that bring the system's response toward a target at
  * both seats, after Resonalyze's EQ Wizard idea (github.com/DIMOSUS/Resonalyze, MIT).
  *
  * The response is each side's Combined sweep (or the sum of its band solos), power-averaged over
